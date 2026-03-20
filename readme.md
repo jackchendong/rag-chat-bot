@@ -40,6 +40,12 @@ python -m app.main
 会自动加载项目根目录 `.env`，并读取 `SERVER_PORT`（例如 `SERVER_PORT=8000`）。
 数据库使用 SQLAlchemy + MySQL，连接串通过 `DATABASE_URL` 配置。
 
+前端静态文件目录为 `front/dist`，已挂载到根路径：
+
+```
+http://127.0.0.1:8000/
+```
+
 `.env` 示例：
 
 ```
@@ -50,30 +56,30 @@ OPENAI_MODEL=deepseek-chat
 OPENAI_API_BASE_URL=https://api.deepseek.com/v1
 ```
 
-打开 http://127.0.0.1:8000/ 会返回：
+健康检查接口：
 
 ```
-ok
+GET /api/
 ```
 
 RESTful 用户接口：
 
 ```
-GET /users?q=adm&limit=10&offset=0
-GET /users/{user_id}
-POST /users
-PUT /users/{user_id}
-DELETE /users/{user_id}
+GET /api/users?q=adm&limit=10&offset=0
+GET /api/users/{user_id}
+POST /api/users
+PUT /api/users/{user_id}
+DELETE /api/users/{user_id}
 ```
 
 对话接口：
 
 ```
-POST /chat
-POST /chat/stream
+POST /api/chat
+POST /api/chat/stream
 ```
 
-POST /chat 请求示例：
+POST /api/chat 请求示例：
 
 ```
 {
@@ -83,7 +89,7 @@ POST /chat 请求示例：
 }
 ```
 
-POST /chat 响应示例：
+POST /api/chat 响应示例：
 
 ```
 {
@@ -94,7 +100,7 @@ POST /chat 响应示例：
 SSE 流式对话示例：
 
 ```bash
-curl -N -X POST http://127.0.0.1:8000/chat/stream \
+curl -N -X POST http://127.0.0.1:8000/api/chat/stream \
 	-H "Content-Type: application/json" \
 	-d '{"message":"请分三段介绍 FastAPI","system_prompt":"你是一个简洁助手","conversation_id":"demo-1"}'
 ```

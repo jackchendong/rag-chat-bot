@@ -1,9 +1,11 @@
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 from app.api import router as api_router
@@ -18,8 +20,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(lifespan=lifespan)
 
+app.include_router(api_router, prefix="/api")
 
-app.include_router(api_router)
+
+front_dist_dir = Path(__file__).resolve().parent.parent / "front" / "dist"
+if front_dist_dir.exists():
+    app.mount("/", StaticFiles(directory=str(front_dist_dir), html=True), name="front")
 
 
 if __name__ == "__main__":

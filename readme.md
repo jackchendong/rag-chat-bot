@@ -26,6 +26,7 @@ app/
 	models/
 		user.py
 	service/
+		chat_service.py
 		user_service.py
 	main.py
 ```
@@ -44,6 +45,9 @@ python -m app.main
 ```
 SERVER_PORT=8000
 DATABASE_URL=mysql+pymysql://root:password@127.0.0.1:3306/rag_chat_bot?charset=utf8mb4
+OPENAI_API_KEY=your_api_key
+OPENAI_MODEL=deepseek-chat
+OPENAI_API_BASE_URL=https://api.deepseek.com/v1
 ```
 
 打开 http://127.0.0.1:8000/ 会返回：
@@ -60,6 +64,48 @@ GET /users/{user_id}
 POST /users
 PUT /users/{user_id}
 DELETE /users/{user_id}
+```
+
+对话接口：
+
+```
+POST /chat
+POST /chat/stream
+```
+
+POST /chat 请求示例：
+
+```
+{
+	"message": "你好，介绍一下你自己",
+	"system_prompt": "你是一个简洁的助手"
+}
+```
+
+POST /chat 响应示例：
+
+```
+{
+	"answer": "你好！我是一个 AI 助手..."
+}
+```
+
+SSE 流式对话示例：
+
+```bash
+curl -N -X POST http://127.0.0.1:8000/chat/stream \
+	-H "Content-Type: application/json" \
+	-d '{"message":"请分三段介绍 FastAPI","system_prompt":"你是一个简洁助手"}'
+```
+
+返回格式为 SSE：
+
+```text
+data: {"delta":"..."}
+
+data: {"delta":"..."}
+
+data: {"done":true}
 ```
 
 POST /users 请求示例：

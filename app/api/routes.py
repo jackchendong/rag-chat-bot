@@ -1,9 +1,13 @@
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import PlainTextResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.service.chat_service import chat_with_openai, stream_chat_with_openai
 from app.service.user_service import (
     create_user as create_user_service,
     delete_user as delete_user_service,
@@ -33,9 +37,51 @@ class UserUpdate(BaseModel):
     email: str | None = None
 
 
+class ChatRequest(BaseModel):
+    message: str
+    system_prompt: str | None = None
+
+
+class ChatResponse(BaseModel):
+    answer: str
+
+
 @router.get("/", response_class=PlainTextResponse)
 def healthcheck() -> str:
     return "ok"
+
+
+@router.post("/chat", response_model=ChatResponse)
+def chat(payload: ChatRequest) -> ChatResponse:
+    try:
+        answer = chat_with_openai(payload.message, payload.system_prompt)
+        return ChatResponse(answer=answer)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"chat failed: {exc}",
+        ) from exc
+
+
+@router.post("/chat/stream")
+def chat_stream(payload: ChatRequest) -> StreamingResponse:
+    def event_generator():
+        try:
+            for chunk in stream_chat_with_openai(payload.message, payload.system_prompt):
+                yield f"data: {json.dumps({'delta': chunk}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
+        except Exception as exc:
+            yield f"event: error\ndata: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/users", response_model=list[UserOut])

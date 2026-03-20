@@ -4,3 +4,5 @@ python-dotenv>=1.0,<2.0
 sqlalchemy>=2.0,<3.0
 pymysql>=1.1,<2.0
 cryptography>=42,<45
+langchain>=0.3,<1.0
+langchain-openai>=0.2,<1.0

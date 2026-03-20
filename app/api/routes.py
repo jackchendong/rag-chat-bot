@@ -40,6 +40,7 @@ class UserUpdate(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     system_prompt: str | None = None
+    conversation_id: str = "default"
 
 
 class ChatResponse(BaseModel):
@@ -54,7 +55,11 @@ def healthcheck() -> str:
 @router.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest) -> ChatResponse:
     try:
-        answer = chat_with_openai(payload.message, payload.system_prompt)
+        answer = chat_with_openai(
+            payload.message,
+            payload.system_prompt,
+            payload.conversation_id,
+        )
         return ChatResponse(answer=answer)
     except Exception as exc:
         raise HTTPException(
@@ -67,7 +72,11 @@ def chat(payload: ChatRequest) -> ChatResponse:
 def chat_stream(payload: ChatRequest) -> StreamingResponse:
     def event_generator():
         try:
-            for chunk in stream_chat_with_openai(payload.message, payload.system_prompt):
+            for chunk in stream_chat_with_openai(
+                payload.message,
+                payload.system_prompt,
+                payload.conversation_id,
+            ):
                 yield f"data: {json.dumps({'delta': chunk}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
         except Exception as exc:

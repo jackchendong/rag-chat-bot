@@ -1,22 +1,36 @@
 import os
 from collections.abc import Iterator
+from threading import Lock
 from typing import Any
 
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 load_dotenv()
 
 _chat_model: ChatOpenAI | None = None
+_conversation_store: dict[str, list[BaseMessage]] = {}
+_conversation_lock = Lock()
 
 
-def _build_messages(message: str, system_prompt: str | None = None) -> list[SystemMessage | HumanMessage]:
-    messages: list[SystemMessage | HumanMessage] = []
-    if system_prompt:
-        messages.append(SystemMessage(content=system_prompt))
-    messages.append(HumanMessage(content=message))
-    return messages
+def _prepare_messages(
+    conversation_id: str,
+    message: str,
+    system_prompt: str | None = None,
+) -> list[BaseMessage]:
+    with _conversation_lock:
+        history = _conversation_store.setdefault(conversation_id, [])
+        if system_prompt and not any(isinstance(m, SystemMessage) for m in history):
+            history.append(SystemMessage(content=system_prompt))
+        history.append(HumanMessage(content=message))
+        return list(history)
+
+
+def _append_ai_message(conversation_id: str, answer: str) -> None:
+    with _conversation_lock:
+        history = _conversation_store.setdefault(conversation_id, [])
+        history.append(AIMessage(content=answer))
 
 
 def _chunk_to_text(content: Any) -> str:
@@ -61,16 +75,30 @@ def _get_chat_model() -> ChatOpenAI:
     return _chat_model
 
 
-def chat_with_openai(message: str, system_prompt: str | None = None) -> str:
-    messages = _build_messages(message, system_prompt)
+def chat_with_openai(
+    message: str,
+    system_prompt: str | None = None,
+    conversation_id: str = "default",
+) -> str:
+    messages = _prepare_messages(conversation_id, message, system_prompt)
 
     response = _get_chat_model().invoke(messages)
-    return str(response.content)
+    answer = str(response.content)
+    _append_ai_message(conversation_id, answer)
+    return answer
 
 
-def stream_chat_with_openai(message: str, system_prompt: str | None = None) -> Iterator[str]:
-    messages = _build_messages(message, system_prompt)
+def stream_chat_with_openai(
+    message: str,
+    system_prompt: str | None = None,
+    conversation_id: str = "default",
+) -> Iterator[str]:
+    messages = _prepare_messages(conversation_id, message, system_prompt)
+    print(messages)
+    answer_parts: list[str] = []
     for chunk in _get_chat_model().stream(messages):
         text = _chunk_to_text(chunk.content)
         if text:
+            answer_parts.append(text)
             yield text
+    _append_ai_message(conversation_id, "".join(answer_parts))

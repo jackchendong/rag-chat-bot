@@ -78,7 +78,8 @@ POST /chat 请求示例：
 ```
 {
 	"message": "你好，介绍一下你自己",
-	"system_prompt": "你是一个简洁的助手"
+	"system_prompt": "你是一个简洁的助手",
+	"conversation_id": "demo-1"
 }
 ```
 
@@ -95,7 +96,7 @@ SSE 流式对话示例：
 ```bash
 curl -N -X POST http://127.0.0.1:8000/chat/stream \
 	-H "Content-Type: application/json" \
-	-d '{"message":"请分三段介绍 FastAPI","system_prompt":"你是一个简洁助手"}'
+	-d '{"message":"请分三段介绍 FastAPI","system_prompt":"你是一个简洁助手","conversation_id":"demo-1"}'
 ```
 
 返回格式为 SSE：
@@ -106,6 +107,13 @@ data: {"delta":"..."}
 data: {"delta":"..."}
 
 data: {"done":true}
+```
+
+多轮对话说明：
+
+```
+conversation_id 相同会命中同一段内存会话历史。
+当前是进程内缓存，服务重启后会话历史会丢失。
 ```
 
 POST /users 请求示例：

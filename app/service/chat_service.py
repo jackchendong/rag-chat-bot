@@ -1,4 +1,5 @@
 import os
+import json
 from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -27,6 +28,7 @@ class ConversationState:
     recent_messages: list[BaseMessage] = field(default_factory=list)
     unsummarized_messages: list[BaseMessage] = field(default_factory=list)
     summarizing: bool = False
+    pending_rewritten_question: str | None = None
 
 
 _conversation_store: dict[str, ConversationState] = {}
@@ -51,6 +53,48 @@ _summary_prompt_template = ChatPromptTemplate.from_messages(
             "Current summary:\n{previous_summary}\n\n"
             "New conversation segment:\n{dialogue}\n\n"
             "Produce an updated summary in under 180 words.",
+        ),
+    ]
+)
+
+_rewrite_prompt_template = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """你是一个对话改写助手。
+你的任务是根据最近对话，消除用户当前问题中的代词、指代和省略，
+把问题改写成一个语义明确、可独立理解的问题。
+
+要求：
+1. 不要改变用户原意
+2. 如果当前问题已经足够明确，就尽量少改
+3. 输出只能是改写后的问题，不要解释
+""",
+        ),
+        (
+            "user",
+            """最近对话：
+{recent_dialogue}
+
+当前问题：
+{question}
+""",
+        ),
+    ]
+)
+
+_clarity_prompt_template = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "你是问题明确性判断助手。判断问题是否足够明确、可独立理解。"
+            "只输出 JSON："
+            '{{"needs_confirmation": true/false, "question": "问题文本"}}',
+        ),
+        (
+            "user",
+            "最近对话：\n{recent_dialogue}\n\n"
+            "改写后的问题：\n{rewritten_question}",
         ),
     ]
 )
@@ -91,6 +135,127 @@ def _build_system_content(system_prompt: str | None, summary: str) -> str:
         "Conversation summary:\n"
         f"{summary}"
     )
+
+
+def _recent_dialogue_text(messages: list[BaseMessage]) -> str:
+    text = _messages_to_dialogue(messages[-MAX_RECENT_MESSAGES:])
+    return text if text.strip() else "(empty)"
+
+
+def _safe_json_loads(raw: str) -> dict[str, Any] | None:
+    text = raw.strip()
+    if not text:
+        return None
+
+    if text.startswith("```"):
+        parts = text.split("```")
+        if len(parts) >= 3:
+            text = parts[1]
+            if text.startswith("json"):
+                text = text[4:]
+            text = text.strip()
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+
+    try:
+        data = json.loads(text[start : end + 1])
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        return None
+
+    return None
+
+
+def _is_confirmation_text(message: str) -> bool:
+    normalized = message.strip().lower()
+    return normalized in {
+        "确认",
+        "是",
+        "是的",
+        "对",
+        "对的",
+        "yes",
+        "y",
+        "ok",
+        "okay",
+    }
+
+
+def _rewrite_question(recent_dialogue: str, question: str) -> str:
+    prompt_messages = _rewrite_prompt_template.format_messages(
+        recent_dialogue=recent_dialogue,
+        question=question,
+    )
+    response = _get_chat_model().invoke(prompt_messages)
+    rewritten = str(response.content).strip()
+    return rewritten if rewritten else question
+
+
+def _needs_confirmation(recent_dialogue: str, rewritten_question: str) -> bool:
+    prompt_messages = _clarity_prompt_template.format_messages(
+        recent_dialogue=recent_dialogue,
+        rewritten_question=rewritten_question,
+    )
+    response = _get_chat_model().invoke(prompt_messages)
+    parsed = _safe_json_loads(str(response.content))
+    if not parsed:
+        return False
+    return bool(parsed.get("needs_confirmation", False))
+
+
+def _resolve_question_or_confirmation(
+    conversation_id: str,
+    message: str,
+    system_prompt: str | None,
+) -> tuple[str | None, str | None]:
+    with _conversation_lock:
+        state = _get_state(conversation_id)
+        if system_prompt:
+            state.system_prompt = system_prompt
+
+        pending_question = state.pending_rewritten_question
+        recent_dialogue = _recent_dialogue_text(state.recent_messages)
+
+        if pending_question and _is_confirmation_text(message):
+            state.pending_rewritten_question = None
+            return pending_question, None
+
+        if pending_question:
+            state.pending_rewritten_question = None
+
+    try:
+        rewritten = _rewrite_question(recent_dialogue, message)
+        should_confirm = _needs_confirmation(recent_dialogue, rewritten)
+    except Exception:
+        # Fail-open: if rewrite/clarity step fails, continue with original user question.
+        return message, None
+
+    if not should_confirm:
+        return rewritten, None
+
+    confirm_text = (
+        "为确保我理解正确，请确认你的问题是否是：\n"
+        f"{rewritten}\n\n"
+        "请回复“确认”继续，或直接补充更明确的问题。"
+    )
+
+    with _conversation_lock:
+        state = _get_state(conversation_id)
+        state.pending_rewritten_question = rewritten
+
+    return None, confirm_text
+
+
+def _append_user_message(conversation_id: str, message: str) -> None:
+    with _conversation_lock:
+        state = _get_state(conversation_id)
+        state.recent_messages.append(HumanMessage(content=message))
+        state.unsummarized_messages.append(HumanMessage(content=message))
+        state.recent_messages = state.recent_messages[-MAX_RECENT_MESSAGES:]
 
 
 def _run_summary_job(
@@ -156,14 +321,12 @@ def _prepare_messages(
     message: str,
     system_prompt: str | None = None,
 ) -> list[BaseMessage]:
+    _append_user_message(conversation_id, message)
+
     with _conversation_lock:
         state = _get_state(conversation_id)
         if system_prompt:
             state.system_prompt = system_prompt
-
-        state.recent_messages.append(HumanMessage(content=message))
-        state.unsummarized_messages.append(HumanMessage(content=message))
-        state.recent_messages = state.recent_messages[-MAX_RECENT_MESSAGES:]
 
         system_content = _build_system_content(state.system_prompt, state.summary)
         prompt_messages = _chat_prompt_template.format_messages(
@@ -231,7 +394,19 @@ def chat_with_openai(
     system_prompt: str | None = None,
     conversation_id: str = "default",
 ) -> str:
-    messages = _prepare_messages(conversation_id, message, system_prompt)
+    rewritten_question, confirm_text = _resolve_question_or_confirmation(
+        conversation_id,
+        message,
+        system_prompt,
+    )
+
+    if confirm_text:
+        _append_user_message(conversation_id, message)
+        _append_ai_message(conversation_id, confirm_text)
+        return confirm_text
+
+    question_for_chat = rewritten_question or message
+    messages = _prepare_messages(conversation_id, question_for_chat, system_prompt)
 
     response = _get_chat_model().invoke(messages)
     answer = str(response.content)
@@ -244,9 +419,21 @@ def stream_chat_with_openai(
     system_prompt: str | None = None,
     conversation_id: str = "default",
 ) -> Iterator[str]:
-    messages = _prepare_messages(conversation_id, message, system_prompt)
-    print(messages)
-    print("\n---\n")
+    rewritten_question, confirm_text = _resolve_question_or_confirmation(
+        conversation_id,
+        message,
+        system_prompt,
+    )
+
+    if confirm_text:
+        _append_user_message(conversation_id, message)
+        _append_ai_message(conversation_id, confirm_text)
+        yield confirm_text
+        return
+
+    question_for_chat = rewritten_question or message
+    messages = _prepare_messages(conversation_id, question_for_chat, system_prompt)
+
     answer_parts: list[str] = []
     for chunk in _get_chat_model().stream(messages):
         text = _chunk_to_text(chunk.content)

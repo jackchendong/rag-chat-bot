@@ -1,3 +1,5 @@
+import json
+import logging
 from collections.abc import AsyncGenerator, AsyncIterator
 
 import httpx
@@ -6,6 +8,8 @@ from pydantic import BaseModel
 from ..core.config import Settings
 from ..domain.chat import ModelChunk, ModelMessage
 from ..domain.errors import ModelServiceError
+
+logger = logging.getLogger(__name__)
 
 
 class Delta(BaseModel):
@@ -46,6 +50,14 @@ class DeepSeekClient:
         self.settings = settings
 
     async def stream_answer(self, messages: list[ModelMessage]) -> AsyncGenerator[ModelChunk, None]:
+        payload = {
+            'model': self.settings.model,
+            'messages': [{'role': message.role, 'content': message.content} for message in messages],
+            'stream': True,
+            'max_tokens': 1024,
+            'thinking': {'type': 'disabled'},
+        }
+        logger.info('%s', json.dumps(payload, ensure_ascii=False))
         try:
             async with self.client.stream(
                 'POST',
@@ -54,13 +66,7 @@ class DeepSeekClient:
                     'Authorization': f'Bearer {self.settings.api_key.get_secret_value()}',
                     'Accept': 'text/event-stream',
                 },
-                json={
-                    'model': self.settings.model,
-                    'messages': [{'role': message.role, 'content': message.content} for message in messages],
-                    'stream': True,
-                    'max_tokens': 1024,
-                    'thinking': {'type': 'disabled'},
-                },
+                json=payload,
             ) as response:
                 if response.status_code != 200:
                     code = 'upstream_rate_limit' if response.status_code == 429 else 'upstream_error'

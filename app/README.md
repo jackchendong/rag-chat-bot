@@ -268,6 +268,12 @@ POST SSE 不能直接使用浏览器原生 `EventSource` 发送 JSON，应使用
 
 ## 验证与安全
 
+### DeepSeek 请求日志
+
+应用启动时为 backend 日志配置 INFO 级别控制台输出，不修改全局或 HTTPX 日志级别。每次请求 DeepSeek 前仅记录实际发送的 JSON payload：model、完整 messages（role 与 content，包含实际发送的历史上下文）、stream、max_tokens 和 thinking。不额外记录请求 ID、方法、地址、请求头、消息数量或响应状态码；保留标准日志前缀。
+
+payload 不包含 Authorization 或数据库配置，因此不会直接打印配置中的 API key 或数据库密码。完整消息日志按用户要求启用，消息内的个人信息或用户自行输入的秘密也会原样输出，仅用于本地调试；分享日志前务必检查并脱敏。不记录响应正文，日志不改变请求内容和 SSE 协议，不单独发起模型调用；默认输出到控制台，不自动写入文件。
+
 当前没有正式测试、lint 或静态类型检查配置。可在本目录运行基础检查：
 
 ```bash

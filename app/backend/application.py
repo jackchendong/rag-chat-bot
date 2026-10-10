@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from .api.routes.chat import router
 from .api.routes.conversations import router as conversation_router
 from .core.config import DatabaseSettings, Settings
+from .core.logging import configure_logging
 from .db.session import create_database_engine, create_session_factory
 from .providers.deepseek import DeepSeekClient
 from .services.chat import ChatService
@@ -19,6 +20,7 @@ from .repositories.conversations import ConversationRepository
 
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
+    configure_logging()
     settings = Settings.load()
     engine = create_database_engine(DatabaseSettings.load())
     application.state.session_factory = create_session_factory(engine)

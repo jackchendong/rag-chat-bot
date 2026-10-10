@@ -2,7 +2,7 @@
 
 本目录是大模型对话 Demo 的前端模块，负责普通对话、定时任务确认、任务状态与执行结果展示。模型调用、任务持久化和定时调度由 `../app/` 后端负责。
 
-当前目录尚未初始化应用。参考 `tools` 项目的约定，后续初始化采用 Vue 3 + TypeScript + Vite、pnpm、Tailwind CSS 和 shadcn-vue。这是技术栈约定，不代表依赖和启动脚本已经存在；本次规范维护不要求创建应用。
+当前已初始化 Vue 3 + TypeScript + Vite 应用，包管理器为 pnpm，样式使用 Tailwind CSS。已配置 shadcn-vue 的 `components.json`、主题变量和 `src/lib/utils.ts` 类名工具，尚未添加具体 UI 组件。页面暂为 Hello World，不包含聊天或任务功能。
 
 本文件适用于 `front/` 及其子目录。修改前先检查实际文件、`package.json`、锁文件和更深层规范，保持已有实现，不要把计划中的目录、接口或依赖当作现成能力。
 
@@ -18,6 +18,7 @@
 - `src/types/`：共享接口、消息和任务类型。
 - `src/stores/`：确需跨页面共享的状态；采用 Pinia 前先确认依赖。
 - `src/utils/`：通用工具函数。
+- `src/lib/`：组件库集成工具，包含 shadcn-vue 配置引用的类名合并函数。
 - `src/assets/`、`public/`：分别存放构建处理资源和固定公共路径资源。
 - `tests/`：已有测试体系下的测试，按实际配置组织。
 

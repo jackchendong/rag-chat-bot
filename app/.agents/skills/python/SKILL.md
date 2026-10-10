@@ -1,6 +1,6 @@
 ---
 name: python
-description: 实现、修改、审查或调试 rag-chat-bot 的 app Python 后端，按任务选择语法、类型、设计、异步、调度、测试和工具链技能。不用于前端开发，也不代表后端框架已经选定。
+description: 实现、修改、审查或调试 rag-chat-bot 的 app FastAPI 后端，按任务选择语言、分层、异步、调度、测试和工程流程技能。不用于前端开发。
 ---
 
 # Python 后端工作入口
@@ -14,6 +14,7 @@ description: 实现、修改、审查或调试 rag-chat-bot 的 app Python 后�
 | 编写或审查函数、类型、容器、异常、资源管理及语言语法 | [Python 语法](../python-syntax/SKILL.md) |
 | 类型边界、Protocol、TypedDict、泛型及静态检查问题 | [Python 类型](../python-typing/SKILL.md) |
 | 模块划分、配置、依赖注入、错误建模与 API 边界 | [Python 设计](../python-design/SKILL.md) |
+| FastAPI 路由、Schema、服务、领域协议及供应商适配分层 | [FastAPI 架构](../fastapi-architecture/SKILL.md) |
 | async/await、并发、超时、取消、流式响应及后台生命周期 | [Python 异步](../python-async/SKILL.md) |
 | 定时任务、持久化认领、时区、重启恢复与重复执行 | [Python 调度](../python-scheduling/SKILL.md) |
 | 回归测试、mock、时间相关测试及外部接口验证 | [Python 测试](../python-testing/SKILL.md) |

@@ -2,7 +2,7 @@
 
 一个采用前后端分离架构的大模型对话演示项目，分为前端和后端两个模块，目标是支持普通对话，以及通过对话创建并在后台运行定时任务。
 
-> 当前已初始化前端应用，页面暂为 Hello World。后端、普通对话和定时任务尚未实现；下文业务流程描述的是功能目标，而非已经可用的能力。
+> 前端暂为 Hello World，尚未接入后端。后端已实现 DeepSeek 单轮对话 SSE 接口；会话历史、定时任务与 RAG 尚未实现。
 
 ## 功能目标
 
@@ -13,7 +13,7 @@
 
 ## 使用场景
 
-以下为预期交互示例，当前尚不能实际运行。
+以下为预期完整产品的交互示例；目前普通对话可通过后端接口调用，前端聊天与定时任务尚未实现。
 
 ### 普通对话
 
@@ -60,7 +60,7 @@
 
 ```text
 rag-chat-bot/
-├── app/         # 后端模块（待实现）
+├── app/         # FastAPI 后端，含 DeepSeek SSE 对话接口
 ├── front/       # 前端模块（已初始化，Hello World 占位页面）
 ├── .gitignore
 └── README.md
@@ -116,13 +116,75 @@ pnpm preview
 
 ### 后端
 
-后端尚未实现，后续需补充运行环境、安装与启动命令，以及大模型服务、任务存储、调度和默认时区的配置说明。
+后端目录、分层职责、配置及扩展规范详见 [app/README.md](app/README.md)。启动入口和现有 SSE 协议保持不变。
+
+使用 Python 3.10 或兼容版本，在 Git Bash 中从仓库根目录执行：
+
+```bash
+cd app
+./.venv/Scripts/python.exe -m pip install -r requirements.txt
+./.venv/Scripts/python.exe -m uvicorn main:app --reload
+```
+
+若尚无虚拟环境，先使用 Python 3.10 执行 `python -m venv .venv`。PowerShell 中可以用 `& ./.venv/Scripts/python.exe` 调用同一解释器。
+
+配置位于 `app/.env`，新环境可以复制 `.env.example` 为 `.env` 后填写自己的密钥。配置项：
+
+| 变量 | 用途 |
+|---|---|
+| `DEEPSEEK_API_KEY` | 必填，模型服务密钥，缺失时启动失败 |
+| `DEEPSEEK_BASE_URL` | HTTPS 服务地址，默认 `https://api.deepseek.com` |
+| `DEEPSEEK_MODEL` | 默认 `deepseek-flash`，可替换为账户支持的模型 |
+| `DEEPSEEK_TIMEOUT_SECONDS` | 单次网络读写/连接池等待超时，默认 60 秒；连接超时为 10 秒，不是完整回答总耗时上限 |
+
+系统环境变量优先于 `.env`。服务默认监听 `127.0.0.1:8000`，接口文档为 `http://127.0.0.1:8000/docs`。当前没有认证或限流，不应直接暴露到公网。
+
+### SSE 对话接口
+
+`POST /api/chat` 接收 `application/json`，字段 `message` 是去除首尾空白后的非空字符串，最多 10000 个字符，不接受其他字段。当前为单轮对话，不保存上下文。
+
+在 Git Bash 执行下面的请求会调用真实模型并产生相应费用：
+
+```bash
+curl -N http://127.0.0.1:8000/api/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"你好，请简单介绍一下自己"}'
+```
+
+成功响应为 `text/event-stream`，按 SSE 空行分隔事件；`message.content` 是增量文本，需要客户端自行拼接，不是完整回答：
+
+```text
+event: message
+data: {"content": "你好"}
+
+event: message
+data: {"content": "！"}
+
+event: done
+data: {"finish_reason": "stop", "truncated": false}
+
+```
+
+模型输出最多 1024 个 token，使用非思考模式；达到上限时 `done.truncated` 为 `true`。正常完成发送一次 `done`；上游错误、超时、无效数据或意外断流发送 `error` 并结束，不再发送成功事件：
+
+```text
+event: error
+data: {"code": "upstream_timeout", "message": "模型服务响应超时，请稍后重试"}
+
+```
+
+输入不合法返回 HTTP 422；上游问题在已经建立的 SSE 响应中以 `error` 事件报告，因此 HTTP 200 本身不代表回答成功。客户端断开时释放流连接，但不保证供应商侧已经停止生成或计费。接口不自动重试，不返回供应商原始错误内容或密钥。
+
+这是 POST SSE，浏览器原生 `EventSource` 不能直接传入该 JSON 请求，应使用 `fetch` 流读取或支持 POST 的 SSE 客户端。反向代理应禁用响应缓冲并设置足够的流式读取超时；当前前端未修改。
+
+实现依据 [DeepSeek Chat Completions 文档](https://api-docs.deepseek.com/api/create-chat-completion/) 的流式协议，任务存储、调度与默认时区的配置将在对应功能实现时补充。
 
 大模型 API 密钥应由后端读取，不能写入前端代码或提交到版本库。
 
 ## 待实现事项
 
-- [ ] 普通对话接口与聊天页面。
+- [x] 单轮普通对话后端接口（DeepSeek + SSE）。
+- [ ] 前端聊天页面及会话历史。
 - [ ] 对话中的任务意图识别与信息确认。
 - [ ] 定时任务持久化及后台调度。
 - [ ] 任务执行状态与结果查询。

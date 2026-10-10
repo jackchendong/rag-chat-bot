@@ -18,7 +18,7 @@ PowerShell 使用 `& ./.venv/Scripts/python.exe` 调用同一解释器。不要�
 
 ## 依赖
 
-- 先检查 `pyproject.toml`、requirements 文件和锁文件是否存在，沿用实际方案；当前项目尚未选定。
+- 先检查实际依赖清单，当前使用 pip 与 `app/requirements.txt`，后续沿用此方案，不推断其他管理工具已经存在。
 - 使用选定工具生成对应锁文件，不手工编造依赖解析结果；不并行新增 pip、Poetry、uv 等多套管理方式。
 - 项目采用 pip 时，通过目标解释器的 `-m pip` 执行，不使用全局 pip。安装依赖与更新清单须一致。
 - 缺工具时报告限制。不要为纯文档检查修改应用环境或安装格式化、测试工具。
@@ -30,7 +30,7 @@ PowerShell 使用 `& ./.venv/Scripts/python.exe` 调用同一解释器。不要�
 语法检查可使用标准库，仅对明确修改的文件执行，例如已有的 `main.py`：
 
 ```bash
-./.venv/Scripts/python.exe -m py_compile main.py
+./.venv/Scripts/python.exe -m compileall -q main.py backend
 ```
 
 这只验证语法，不证明导入、类型、接口或业务运行正确，也不要递归扫描 `.venv/`。

@@ -2,9 +2,9 @@
 
 `app/` 是大模型对话 Demo 的 Python 后端，目标是支持普通对话、通过对话创建定时任务，以及后台调度和执行结果查询。前端位于 `../front/`；浏览器只负责交互和展示，不承担任务调度。
 
-当前仅有 PyCharm 示例 `main.py`、本地 `.venv` 和编辑器配置，尚未实现 HTTP 服务、模型调用、任务存储或调度，也没有依赖清单和测试配置。不要把以下约定当作已经实现的功能。
+当前已实现 FastAPI 单轮对话接口 `POST /api/chat`，通过 HTTPX 调用 DeepSeek 并返回 SSE。`main.py` 仅创建应用，实现位于 `backend/`。配置从 `app/.env` 和环境变量加载，后者优先；依赖使用 pip 与 `requirements.txt` 管理。后端说明以本目录 `README.md` 为准。尚未实现会话历史、任务存储、调度和正式测试体系。
 
-本文件适用于 `app/` 及其子目录。参考 `nodelease` 的分层规范组织方式，但不继承其 Go、Redis 租约或发布约定。本次规范维护不要求初始化后端框架或修改示例程序。
+本文件适用于 `app/` 及其子目录。规范组织参考 `nodelease`，应用分工参考 fastapi-clean-architecture，并按本 Demo 实际职责精简；不继承参考工程的 Go、Redis 租约、认证或发布约定。
 
 ## Python 技能
 
@@ -18,11 +18,19 @@
 - 当前本地虚拟环境为 `app/.venv`，已检测解释器版本为 Python 3.10.11；在显式升级运行环境之前，代码兼容 Python 3.10，不使用更高版本专属语法或 API。
 - 在 `app/` 工作目录下，Windows Python 路径为 `.venv/Scripts/python.exe`，Git Bash 可用 `./.venv/Scripts/python.exe`。不要误用全局解释器。
 - `.vscode/settings.json` 用于打开 `app/` 文件夹时选择解释器和 Git Bash，不修改 `.bashrc`、系统 Python 或全局工具配置。
-- 新增依赖前检查现有清单和锁文件。依赖管理方式尚未确定，不同时引入多套管理方案，也不为维护文档安装应用依赖。
-- 不预先指定 FastAPI、Flask、数据库、模型 SDK 或调度框架；选择时结合具体需求，并更新实际依赖和运行文档。
+- 新增依赖前检查现有清单，沿用 pip 与 `requirements.txt`，不同时引入多套管理方案，也不为维护文档安装应用依赖。
+- 当前使用 `.venv/Scripts/python.exe -m pip install -r requirements.txt` 安装依赖，使用 `.venv/Scripts/python.exe -m uvicorn main:app --reload` 在 `app/` 启动本地服务。
+- Web 框架已选定为 FastAPI，模型适配使用 HTTPX；不引入平行框架。数据库、模型 SDK 或调度框架按真实需求选择，并更新依赖和运行文档。
 - 不提交 `.venv/`、缓存、密钥、日志或本地运行数据。
 
 ## 组织与代码约定
+
+- `backend/application.py`：应用工厂、路由注册、lifespan 与依赖装配；`main.py` 只保留 Uvicorn 入口。
+- `backend/api/`：HTTP 路由、Depends 与 SSE 传输；`backend/schemas/`：外部字段校验。
+- `backend/services/`：业务编排，仅依赖领域契约，不导入 FastAPI、HTTPX 或供应商实现。
+- `backend/domain/`：标准库数据类型、模型网关协议和安全业务错误，不依赖外层实现。
+- `backend/providers/`：模型供应商网络适配与数据解析；`backend/core/`：配置加载与校验。
+- 当前没有数据库，不创建空的 ORM、Repository 或 DB 目录。分层实现前读取 `.agents/skills/fastapi-architecture/SKILL.md`。
 
 - 保持当前实现简单；职责增长后再按需拆分请求入口、业务服务、模型适配、任务调度、持久化、配置和测试，不预建空目录。
 - API 层负责输入校验和响应映射，业务层不依赖前端展示逻辑，模型和存储调用保持明确边界。
@@ -57,5 +65,5 @@
 - 修改 Python 代码时使用本地虚拟环境，先做聚焦验证，再运行项目实际存在的检查；具体命令见工具链技能。
 - 尚未配置测试、格式化或类型检查工具时，不宣称已通过，不为纯文档任务引入工具链。
 - 有测试体系后，缺陷修复优先补充回归测试，时间相关测试避免真实长时间等待，外部调用不使用真实付费模型作为默认测试依赖。
-- 修改接口、依赖、启动流程或任务行为时同步更新 `../README.md`，明确哪些能力已实现。
+- 修改接口、依赖、启动流程或任务行为时同步更新本目录 `README.md`，并检查 `../README.md` 的公开说明，明确哪些能力已实现。
 - 不修改前端或执行部署、提交、发布等与当前任务无关的操作。交付说明实际修改、验证结果和未运行检查。

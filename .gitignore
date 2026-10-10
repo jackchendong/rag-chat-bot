@@ -17,6 +17,10 @@ build/
 .vite/
 *.tsbuildinfo
 
+# Frontend build files served by the backend
+/app/static/*
+!/app/static/.gitkeep
+
 # Python backend environments and caches
 .venv/
 venv/

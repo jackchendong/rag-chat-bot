@@ -4,7 +4,7 @@ import httpx
 from pydantic import BaseModel
 
 from ..core.config import Settings
-from ..domain.chat import ModelChunk
+from ..domain.chat import ModelChunk, ModelMessage
 from ..domain.errors import ModelServiceError
 
 
@@ -45,7 +45,7 @@ class DeepSeekClient:
         self.client = client
         self.settings = settings
 
-    async def stream_answer(self, message: str) -> AsyncGenerator[ModelChunk, None]:
+    async def stream_answer(self, messages: list[ModelMessage]) -> AsyncGenerator[ModelChunk, None]:
         try:
             async with self.client.stream(
                 'POST',
@@ -56,7 +56,7 @@ class DeepSeekClient:
                 },
                 json={
                     'model': self.settings.model,
-                    'messages': [{'role': 'user', 'content': message}],
+                    'messages': [{'role': message.role, 'content': message.content} for message in messages],
                     'stream': True,
                     'max_tokens': 1024,
                     'thinking': {'type': 'disabled'},

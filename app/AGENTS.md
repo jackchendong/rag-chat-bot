@@ -2,7 +2,7 @@
 
 `app/` 是大模型对话 Demo 的 Python 后端，目标是支持普通对话、通过对话创建定时任务，以及后台调度和执行结果查询。前端位于 `../front/`；浏览器只负责交互和展示，不承担任务调度。
 
-当前已实现 FastAPI 单轮对话接口 `POST /api/chat`，通过 HTTPX 调用 DeepSeek 并返回 SSE。`main.py` 仅创建应用，实现位于 `backend/`。配置从 `app/.env` 和环境变量加载，后者优先；依赖使用 pip 与 `requirements.txt` 管理。后端说明以本目录 `README.md` 为准。尚未实现会话历史、任务存储、调度和正式测试体系。
+当前已实现账号登录或创建、用户存在性与会话归属校验、会话历史和 FastAPI 多轮对话 `POST /api/chat`，通过 HTTPX 调用 DeepSeek 并返回 SSE。请求头使用 X-User-Id，聊天使用 conversation_id。`main.py` 仅创建应用，配置从 .env 和环境变量加载，后者优先；依赖使用 pip 与 requirements.txt 管理。说明以本目录 README.md 为准，尚未实现正式认证、任务存储、调度和正式测试体系。
 
 本文件适用于 `app/` 及其子目录。规范组织参考 `nodelease`，应用分工参考 fastapi-clean-architecture，并按本 Demo 实际职责精简；不继承参考工程的 Go、Redis 租约、认证或发布约定。
 
@@ -30,7 +30,8 @@
 - `backend/services/`：业务编排，仅依赖领域契约，不导入 FastAPI、HTTPX 或供应商实现。
 - `backend/domain/`：标准库数据类型、模型网关协议和安全业务错误，不依赖外层实现。
 - `backend/providers/`：模型供应商网络适配与数据解析；`backend/core/`：配置加载与校验。
-- 数据库采用 MySQL、SQLAlchemy 2.0 和 PyMySQL；`backend/db/` 管理连接与 Session，`backend/models/` 管理 ORM，`migrations/` 与 Alembic 管理版本。当前用户表仅包含 id、account、created_at、updated_at，不预建空 Repository。分层实现前读取 `.agents/skills/fastapi-architecture/SKILL.md`。
+- 数据库采用 MySQL、SQLAlchemy 2.0 和 PyMySQL；db 管理 Session，models 管理 users、conversations、messages 映射，repositories 实现领域存储协议，migrations 与 Alembic 管理版本。分层实现前读取 `.agents/skills/fastapi-architecture/SKILL.md`。
+- X-User-Id 必须对应已有用户，所有会话操作校验归属。无密码登录不能防止冒用，不将其描述为正式认证。生成前提交消息和占用标记，生成后提交回答再发送 done；同步数据库操作放在线程池，流式期间不持有长事务。
 - 数据库配置从 `.env` 和环境变量加载，密码使用 SecretStr，不打印连接凭据。启动只创建惰性引擎，不自动连接、建表或迁移；迁移由用户手动执行。未明确授权时不连接远程数据库，不运行在线迁移、autogenerate 或探活。
 - Session 按请求关闭，事务由业务明确提交；同步 PyMySQL 查询不直接放在异步路由中。数据库会话使用 UTC，ORM 与迁移保持字段、默认值和自动更新时间一致。
 

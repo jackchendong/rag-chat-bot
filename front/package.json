@@ -11,6 +11,7 @@
     "dev": "vite",
     "typecheck": "vue-tsc -b",
     "build": "vue-tsc -b && vite build",
+    "build:backend": "vue-tsc -b && vite build --outDir ../app/static",
     "preview": "vite preview"
   },
   "dependencies": {

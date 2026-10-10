@@ -2,9 +2,9 @@
 
 一个采用前后端分离架构的大模型对话演示项目，分为前端和后端两个模块，目标是支持普通对话，以及通过对话创建并在后台运行定时任务。
 
-> 前端暂为 Hello World，尚未接入后端。后端已实现 DeepSeek 单轮对话 SSE 接口；会话历史、定时任务与 RAG 尚未实现。
+> 已实现账号登录、退出、会话历史及多轮文本 SSE 对话。定时任务与 RAG 尚未实现。
 
-后端已加入 MySQL 连接配置、四字段用户表 ORM 与 Alembic 初始迁移，尚未执行迁移；手动升级步骤见 `app/README.md` 的“MySQL 与手动迁移”。服务启动不会自动建表或迁移，当前没有用户 CRUD 或认证接口。
+后端使用 MySQL 存储 users、conversations 和 messages，新增 Alembic 迁移由你手动执行；步骤见 app/README.md。服务启动不会自动建表或迁移。账号登录无密码，用户 ID 请求头只是 Demo 身份识别，不能防止冒用，不适合公开部署或存储敏感信息。
 
 ## 功能目标
 
@@ -15,7 +15,7 @@
 
 ## 使用场景
 
-以下为预期完整产品的交互示例；目前普通对话可通过后端接口调用，前端聊天与定时任务尚未实现。
+普通对话已可通过前端或后端接口调用；定时任务部分仍为预期交互示例，尚未实现。
 
 ### 普通对话
 
@@ -63,7 +63,7 @@
 ```text
 rag-chat-bot/
 ├── app/         # FastAPI 后端，含 DeepSeek SSE 对话接口
-├── front/       # 前端模块（已初始化，Hello World 占位页面）
+├── front/       # Vue 登录、历史会话和文本聊天页面
 ├── .gitignore
 └── README.md
 ```
@@ -104,13 +104,14 @@ pnpm install
 pnpm dev
 ```
 
-默认访问地址为 `http://localhost:5173`，端口被占用时以终端显示的地址为准。当前页面仅显示 Hello World，无需配置后端或大模型密钥。
+默认访问 http://localhost:5173，端口以终端输出为准。先启动后端并手动执行数据库迁移；开发服务器通过 /api 代理到 127.0.0.1:8000，模型密钥只配置在后端。输入账号登录，首次使用自动创建；退出仅清除本地账号和用户 ID，不删除数据库历史。
 
 其他命令（在 `front/` 中执行）：
 
 ```powershell
 pnpm typecheck
 pnpm build
+pnpm build:backend
 pnpm preview
 ```
 
@@ -119,6 +120,8 @@ pnpm preview
 ### 后端
 
 后端目录、分层职责、配置及扩展规范详见 [app/README.md](app/README.md)。启动入口和现有 SSE 协议保持不变。
+
+后端通过 /static/ 提供前端页面。在 front/ 执行 pnpm build:backend，将页面和资源构建到 app/static，之后访问 http://127.0.0.1:8000/static/。构建资源路径已配置为 /static/，产物不提交；不要在公开目录放入密钥或私有数据。
 
 使用 Python 3.10 或兼容版本，在 Git Bash 中从仓库根目录执行：
 
@@ -130,7 +133,7 @@ cd app
 
 若尚无虚拟环境，先使用 Python 3.10 执行 `python -m venv .venv`。PowerShell 中可以用 `& ./.venv/Scripts/python.exe` 调用同一解释器。
 
-根目录 `requirements.txt` 仅引用 `app/requirements.txt`，方便从仓库根目录打开项目时识别 Python 依赖；后端依赖版本仍统一维护在 `app/requirements.txt`。PyCharm 若提示包未列入 requirements，请确认项目解释器为 `app/.venv/Scripts/python.exe`，并在 Python → Tools → Integrated Tools 中将 Package requirements file for SDK 指向 `app/requirements.txt`（参见 [官方配置说明](https://www.jetbrains.com/help/pycharm/managing-dependencies.html#configure-requirements)）。不要通过关闭检查来隐藏提示。
+后端依赖统一维护在 `app/requirements.txt`。PyCharm 若提示包未列入 requirements，请确认项目解释器为 `app/.venv/Scripts/python.exe`，并在 Python → Tools → Integrated Tools 中将 Package requirements file for SDK 指向 `app/requirements.txt`（参见 [官方配置说明](https://www.jetbrains.com/help/pycharm/managing-dependencies.html#configure-requirements)）。不要通过关闭检查来隐藏提示。
 
 配置位于 `app/.env`，新环境可以复制 `.env.example` 为 `.env` 后填写自己的密钥。配置项：
 
@@ -148,19 +151,23 @@ cd app
 
 ### SSE 对话接口
 
-`POST /api/chat` 接收 `application/json`，字段 `message` 是去除首尾空白后的非空字符串，最多 10000 个字符，不接受其他字段。当前为单轮对话，不保存上下文。
+先 POST /api/login 输入 account，获取 user_id；再携带 X-User-Id 调用 POST /api/conversations 获取 conversation_id。POST /api/chat 接收 conversation_id 和 message，后者去除空格后为 1–10000 字符。后端校验用户和会话归属，从数据库读取成功历史形成多轮上下文；详见 app/README.md。
 
 在 Git Bash 执行下面的请求会调用真实模型并产生相应费用：
 
 ```bash
 curl -N http://127.0.0.1:8000/api/chat \
   -H 'Content-Type: application/json' \
-  -d '{"message":"你好，请简单介绍一下自己"}'
+  -H 'X-User-Id: 替换为登录返回的用户ID' \
+  -d '{"conversation_id":"替换为创建会话返回的UUID","message":"你好，请简单介绍一下自己"}'
 ```
 
 成功响应为 `text/event-stream`，按 SSE 空行分隔事件；`message.content` 是增量文本，需要客户端自行拼接，不是完整回答：
 
 ```text
+event: meta
+data: {"conversation_id":"会话UUID","user_message_id":"1","assistant_message_id":"2"}
+
 event: message
 data: {"content": "你好"}
 
@@ -190,8 +197,8 @@ data: {"code": "upstream_timeout", "message": "模型服务响应超时，请稍
 
 ## 待实现事项
 
-- [x] 单轮普通对话后端接口（DeepSeek + SSE）。
-- [ ] 前端聊天页面及会话历史。
+- [x] 多轮对话后端接口、用户存在性与会话归属校验（DeepSeek + SSE）。
+- [x] 账号登录、退出、前端聊天页面及持久化会话历史。
 - [ ] 对话中的任务意图识别与信息确认。
 - [ ] 定时任务持久化及后台调度。
 - [ ] 任务执行状态与结果查询。

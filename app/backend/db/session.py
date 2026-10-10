@@ -12,6 +12,8 @@ def create_database_engine(settings: DatabaseSettings) -> Engine:
         hide_parameters=True,
         connect_args={
             'connect_timeout': 10,
+            'read_timeout': 10,
+            'write_timeout': 10,
             'init_command': "SET time_zone = '+00:00'",
         },
     )

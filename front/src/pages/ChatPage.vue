@@ -1,0 +1,259 @@
+<script setup lang="ts">
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { ApiError, createConversation, listConversations, listMessages, streamChat } from '@/services/api'
+import type { Conversation, Message, User } from '@/types/chat'
+
+const props = defineProps<{ user: User }>()
+const emit = defineEmits<{ logout: [] }>()
+const conversations = ref<Conversation[]>([])
+const messages = ref<Message[]>([])
+const selectedId = ref<string | null>(null)
+const draft = ref('')
+const error = ref('')
+const notice = ref('')
+const busy = ref(false)
+const loading = ref(false)
+const loadingHistory = ref(false)
+const moreConversations = ref(false)
+const moreMessages = ref(false)
+const sidebarOpen = ref(false)
+const messageArea = ref<HTMLElement | null>(null)
+const follow = ref(true)
+const title = computed(() => conversations.value.find(item => item.conversation_id === selectedId.value)?.title || '新对话')
+let version = 0
+let streamController: AbortController | null = null
+let viewController: AbortController | null = null
+let listController: AbortController | null = null
+
+function report(failure: unknown) {
+  if (failure instanceof ApiError && failure.status === 401) {
+    emit('logout')
+    return
+  }
+  error.value = failure instanceof Error ? failure.message : '请求失败，请稍后重试'
+}
+
+async function scrollToBottom(force = false) {
+  await nextTick()
+  if ((follow.value || force) && messageArea.value) messageArea.value.scrollTop = messageArea.value.scrollHeight
+}
+
+function trackScroll() {
+  const element = messageArea.value
+  if (element) follow.value = element.scrollHeight - element.scrollTop - element.clientHeight < 100
+}
+
+async function refreshConversations(append = false) {
+  listController?.abort()
+  const controller = new AbortController()
+  listController = controller
+  loadingHistory.value = true
+  try {
+    const rows = await listConversations(props.user.user_id, append ? conversations.value.length : 0, controller.signal)
+    if (controller.signal.aborted) return
+    conversations.value = append ? [...conversations.value, ...rows] : rows
+    moreConversations.value = rows.length === 30
+  } catch (failure) {
+    if (!controller.signal.aborted) report(failure)
+  } finally {
+    if (listController === controller) loadingHistory.value = false
+  }
+}
+
+function resetView() {
+  version += 1
+  streamController?.abort()
+  viewController?.abort()
+  busy.value = false
+  loading.value = false
+  error.value = ''
+  notice.value = ''
+  draft.value = ''
+  sidebarOpen.value = false
+  follow.value = true
+}
+
+function newConversation() {
+  resetView()
+  selectedId.value = null
+  messages.value = []
+  moreMessages.value = false
+}
+
+async function selectConversation(conversation: Conversation) {
+  resetView()
+  const currentVersion = version
+  selectedId.value = conversation.conversation_id
+  messages.value = []
+  moreMessages.value = false
+  loading.value = true
+  const controller = new AbortController()
+  viewController = controller
+  try {
+    const rows = await listMessages(props.user.user_id, conversation.conversation_id, controller.signal)
+    if (currentVersion !== version || controller.signal.aborted) return
+    messages.value = rows
+    moreMessages.value = rows.length === 50
+    await scrollToBottom(true)
+  } catch (failure) {
+    if (currentVersion === version && !controller.signal.aborted) report(failure)
+  } finally {
+    if (currentVersion === version) loading.value = false
+  }
+}
+
+async function loadOlderMessages() {
+  const first = messages.value[0]
+  if (!selectedId.value || !first || loading.value || busy.value) return
+  const currentVersion = version
+  const controller = new AbortController()
+  viewController = controller
+  loading.value = true
+  const oldHeight = messageArea.value?.scrollHeight || 0
+  try {
+    const rows = await listMessages(props.user.user_id, selectedId.value, controller.signal, first.id)
+    if (currentVersion !== version || controller.signal.aborted) return
+    messages.value = [...rows, ...messages.value]
+    moreMessages.value = rows.length === 50
+    await nextTick()
+    if (messageArea.value) messageArea.value.scrollTop += messageArea.value.scrollHeight - oldHeight
+  } catch (failure) {
+    if (currentVersion === version && !controller.signal.aborted) report(failure)
+  } finally {
+    if (currentVersion === version) loading.value = false
+  }
+}
+
+async function send() {
+  const content = draft.value.trim()
+  if (!content || content.length > 10000 || busy.value || loading.value) return
+  const currentVersion = version
+  const controller = new AbortController()
+  streamController = controller
+  busy.value = true
+  error.value = ''
+  notice.value = ''
+  follow.value = true
+  let accepted = false
+  const userMessage: Message = { id: `local-user-${crypto.randomUUID()}`, role: 'user', content, status: 'completed', created_at: new Date().toISOString() }
+  const assistantMessage: Message = { id: `local-assistant-${crypto.randomUUID()}`, role: 'assistant', content: '', status: 'generating', created_at: new Date().toISOString() }
+  try {
+    if (!selectedId.value) {
+      const conversation = await createConversation(props.user.user_id, controller.signal)
+      if (currentVersion !== version || controller.signal.aborted) return
+      selectedId.value = conversation.conversation_id
+      conversations.value.unshift(conversation)
+    }
+    messages.value.push(userMessage, assistantMessage)
+    await scrollToBottom(true)
+    await streamChat(props.user.user_id, selectedId.value, content, controller.signal, event => {
+      if (currentVersion !== version || controller.signal.aborted) return
+      const userRow = messages.value.find(item => item.id === userMessage.id)
+      const assistantRow = messages.value.find(item => item.id === assistantMessage.id)
+      if (event.event === 'meta') {
+        accepted = true
+        draft.value = ''
+        if (userRow) userRow.id = event.user_message_id
+        if (assistantRow) assistantRow.id = event.assistant_message_id
+        userMessage.id = event.user_message_id
+        assistantMessage.id = event.assistant_message_id
+        void refreshConversations()
+      } else if (event.event === 'message' && assistantRow) {
+        assistantRow.content += event.content
+        void scrollToBottom()
+      } else if (event.event === 'done' && assistantRow) {
+        assistantRow.status = 'completed'
+        if (event.truncated) notice.value = '回答达到输出长度上限，可以继续追问。'
+      }
+    })
+  } catch (failure) {
+    if (currentVersion !== version) return
+    const assistantRow = messages.value.find(item => item.id === assistantMessage.id)
+    if (controller.signal.aborted) {
+      if (assistantRow) assistantRow.status = 'cancelled'
+      notice.value = '已停止生成。'
+    } else {
+      if (assistantRow) assistantRow.status = 'failed'
+      draft.value = content
+      if (!accepted) messages.value = messages.value.filter(item => item.id !== userMessage.id && item.id !== assistantMessage.id)
+      report(failure)
+    }
+  } finally {
+    if (currentVersion === version) {
+      busy.value = false
+      void refreshConversations()
+    }
+  }
+}
+
+function handleEnter(event: KeyboardEvent) {
+  if (event.isComposing || event.shiftKey) return
+  event.preventDefault()
+  void send()
+}
+
+function logout() {
+  resetView()
+  listController?.abort()
+  emit('logout')
+}
+
+onMounted(() => void refreshConversations())
+onBeforeUnmount(() => {
+  version += 1
+  streamController?.abort()
+  viewController?.abort()
+  listController?.abort()
+})
+</script>
+
+<template>
+  <div class="flex h-svh overflow-hidden bg-background">
+    <button v-if="sidebarOpen" aria-label="关闭侧栏" class="fixed inset-0 z-20 bg-black/30 md:hidden" @click="sidebarOpen = false" />
+    <aside :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'"
+      class="fixed inset-y-0 left-0 z-30 flex w-64 shrink-0 flex-col border-r bg-muted p-3 transition-transform md:static">
+      <div class="flex items-center justify-between px-3 py-4"><span class="font-semibold">✦ Chat Demo</span><button aria-label="关闭侧栏" class="md:hidden" @click="sidebarOpen = false">✕</button></div>
+      <button class="rounded-xl border bg-background px-4 py-3 text-left text-sm font-medium hover:bg-accent" @click="newConversation">＋ 新建对话</button>
+      <div class="mt-6 flex items-center justify-between px-3 text-xs text-muted-foreground"><span>你的对话</span><button :disabled="loadingHistory" aria-label="刷新对话历史" @click="refreshConversations()">刷新</button></div>
+      <nav aria-label="对话历史" class="mt-2 flex-1 space-y-1 overflow-y-auto">
+        <p v-if="!conversations.length" class="px-3 py-4 text-xs text-muted-foreground">{{ loadingHistory ? '正在加载…' : '还没有对话，开始聊聊吧' }}</p>
+        <button v-for="conversation in conversations" :key="conversation.conversation_id" :title="conversation.title"
+          :aria-current="selectedId === conversation.conversation_id ? 'page' : undefined"
+          :class="selectedId === conversation.conversation_id ? 'bg-accent font-medium' : 'hover:bg-accent/70'"
+          class="block w-full truncate rounded-lg px-3 py-3 text-left text-sm" @click="selectConversation(conversation)">{{ conversation.title }}</button>
+        <button v-if="moreConversations" :disabled="loadingHistory" class="w-full py-3 text-xs text-muted-foreground" @click="refreshConversations(true)">加载更多</button>
+      </nav>
+      <div class="mt-3 border-t pt-3"><p class="truncate px-3 text-sm font-medium" :title="user.account">{{ user.account }}</p><button class="mt-2 w-full rounded-lg px-3 py-2 text-left text-sm text-muted-foreground hover:bg-accent" @click="logout">退出登录</button></div>
+    </aside>
+    <main class="flex min-w-0 flex-1 flex-col">
+      <header class="flex h-16 shrink-0 items-center gap-3 border-b px-5"><button aria-label="打开对话历史" class="rounded-lg p-2 md:hidden" @click="sidebarOpen = true">☰</button><h1 class="truncate text-sm font-medium">{{ title }}</h1><span class="ml-auto text-xs text-muted-foreground">DeepSeek</span></header>
+      <div ref="messageArea" class="flex-1 overflow-y-auto px-4 py-8" @scroll="trackScroll">
+        <div class="mx-auto max-w-3xl">
+          <button v-if="moreMessages" :disabled="loading || busy" class="mb-6 w-full text-sm text-muted-foreground" @click="loadOlderMessages">加载更早消息</button>
+          <p v-if="loading && !messages.length" class="py-12 text-center text-muted-foreground">正在加载消息…</p>
+          <div v-else-if="!messages.length" class="flex min-h-64 flex-col items-center justify-center text-center"><span class="mb-5 text-4xl">✦</span><h2 class="text-2xl font-semibold tracking-tight">有什么可以帮你？</h2><p class="mt-3 text-sm text-muted-foreground">支持多轮文本对话，历史记录会自动保存。</p></div>
+          <article v-for="message in messages" :key="message.id" class="mb-8 flex" :class="message.role === 'user' ? 'justify-end' : 'justify-start'">
+            <div :class="message.role === 'user' ? 'max-w-[85%] rounded-3xl bg-muted px-5 py-3' : 'w-full min-w-0'">
+              <p v-if="message.role === 'assistant'" class="mb-3 text-xs font-semibold text-muted-foreground">✦ 助手</p>
+              <p class="whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-7">{{ message.content || (message.status === 'generating' ? '正在思考…' : '未生成回答') }}</p>
+              <p v-if="message.status !== 'completed' && message.role === 'assistant'" class="mt-2 text-xs text-muted-foreground">{{ message.status === 'generating' ? '生成中' : message.status === 'failed' ? '回答失败，可重新发送' : '已停止' }}</p>
+            </div>
+          </article>
+        </div>
+      </div>
+      <footer class="shrink-0 px-4 pb-4 pt-2">
+        <div class="mx-auto max-w-3xl">
+          <p v-if="error" role="alert" class="mb-3 text-sm text-destructive">{{ error }}</p>
+          <p v-if="notice" role="status" class="mb-3 text-sm text-muted-foreground">{{ notice }}</p>
+          <form class="rounded-3xl border bg-muted/50 p-3 shadow-sm" @submit.prevent="send">
+            <label for="message" class="sr-only">消息</label>
+            <textarea id="message" v-model="draft" maxlength="10000" rows="2" :disabled="busy || loading" placeholder="发送消息，Enter 发送，Shift + Enter 换行"
+              class="w-full resize-none bg-transparent px-2 py-2 outline-none disabled:opacity-60" @keydown.enter="handleEnter" />
+            <div class="flex items-center justify-between"><span class="pl-2 text-xs text-muted-foreground">{{ draft.length }}/10000</span><button v-if="busy" type="button" class="rounded-full border px-4 py-2 text-sm" @click="streamController?.abort()">停止生成</button><button v-else :disabled="!draft.trim() || loading" class="rounded-full bg-primary px-5 py-2 text-sm text-primary-foreground disabled:opacity-40">发送 ↑</button></div>
+          </form>
+          <p class="mt-3 text-center text-xs text-muted-foreground">AI 回答可能不准确。Demo 无密码登录，请勿输入敏感信息。</p>
+        </div>
+      </footer>
+    </main>
+  </div>
+</template>

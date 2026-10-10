@@ -1,5 +1,5 @@
 import json
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import aclosing
 
 import anyio
@@ -16,8 +16,9 @@ async def encode_events(events: AsyncGenerator[ChatEvent, None]) -> AsyncGenerat
 
 
 class SSEStreamingResponse(StreamingResponse):
-    def __init__(self, events: AsyncGenerator[ChatEvent, None]) -> None:
+    def __init__(self, events: AsyncGenerator[ChatEvent, None], on_close: Callable[[], Awaitable[None]]) -> None:
         self.answer = encode_events(events)
+        self.on_close = on_close
         super().__init__(
             self.answer,
             media_type='text/event-stream',
@@ -30,3 +31,4 @@ class SSEStreamingResponse(StreamingResponse):
         finally:
             with anyio.CancelScope(shield=True):
                 await self.answer.aclose()
+                await self.on_close()

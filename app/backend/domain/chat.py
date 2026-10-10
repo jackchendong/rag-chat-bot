@@ -12,10 +12,16 @@ class ModelChunk:
 
 @dataclass(frozen=True)
 class ChatEvent:
-    event: Literal['message', 'done', 'error']
+    event: Literal['meta', 'message', 'done', 'error']
     data: dict[str, object]
 
 
+@dataclass(frozen=True)
+class ModelMessage:
+    role: Literal['user', 'assistant']
+    content: str
+
+
 class ModelGateway(Protocol):
-    def stream_answer(self, message: str) -> AsyncGenerator[ModelChunk, None]:
+    def stream_answer(self, messages: list[ModelMessage]) -> AsyncGenerator[ModelChunk, None]:
         ...

@@ -2,7 +2,7 @@
 
 本目录是大模型对话 Demo 的前端模块，负责普通对话、定时任务确认、任务状态与执行结果展示。模型调用、任务持久化和定时调度由 `../app/` 后端负责。
 
-当前已初始化 Vue 3 + TypeScript + Vite 应用，包管理器为 pnpm，样式使用 Tailwind CSS。已配置 shadcn-vue 的 `components.json`、主题变量和 `src/lib/utils.ts` 类名工具，尚未添加具体 UI 组件。页面暂为 Hello World，不包含聊天或任务功能。
+当前为 Vue 3 + TypeScript + Vite 应用，包管理器为 pnpm，样式使用 Tailwind CSS。已有账号登录、退出、左侧历史会话、纯文本多轮 SSE 聊天与停止生成。已配置 shadcn-vue 的 `components.json`、主题变量和 `src/lib/utils.ts`，尚未添加库组件或定时任务功能。
 
 本文件适用于 `front/` 及其子目录。修改前先检查实际文件、`package.json`、锁文件和更深层规范，保持已有实现，不要把计划中的目录、接口或依赖当作现成能力。
 
@@ -55,6 +55,8 @@
 ## 聊天与定时任务边界
 
 - API 调用集中在 `src/services/`，接口路径、字段、状态值和流式协议以实际后端契约为准。
+- 登录状态只保存 account 和 user_id；退出清除这两个本地字段，不删除数据库用户和历史。API 使用 X-User-Id，聊天使用 conversation_id；这是无密码 Demo 身份识别，不承诺安全认证。
+- 开发服务器通过 /api 代理后端；生产构建使用 /static/ 资源路径。pnpm build:backend 将产物写入 app/static，不修改后端秘密或迁移。
 - 前端不保存模型服务密钥，不直接请求需要私密凭据的模型服务；`VITE_*` 配置会暴露给浏览器，不能承载秘密。
 - 消息至少区分角色和发送状态；请求失败保留用户输入，并提供符合接口能力的重试方式。
 - 如支持流式回复，应处理取消、结束、断连和重复事件；不假设后端已提供 SSE 或 WebSocket。

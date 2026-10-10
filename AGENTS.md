@@ -6,10 +6,10 @@
 
 本项目是前后端分离的大模型对话 Demo，目标是普通对话及通过对话创建后台定时任务。
 
-- `front/`：Vue 3、TypeScript、Vite、Tailwind CSS，使用 pnpm；当前是 Hello World 占位页面，尚未接入后端。
-- `app/`：Python 3.10、FastAPI、HTTPX，已实现 DeepSeek 单轮 SSE 对话接口。
+- `front/`：Vue 3、TypeScript、Vite、Tailwind CSS，使用 pnpm；已有账号登录、退出、历史会话、多轮 SSE 文本聊天页面。
+- `app/`：Python 3.10、FastAPI、HTTPX，已有账号查询或创建、用户存在性与会话归属校验、多轮 SSE 对话和历史接口。
 - 数据库采用 MySQL、SQLAlchemy 2.0、PyMySQL 和 Alembic，已有用户表 ORM 与初始迁移；是否已应用迁移以实际数据库状态为准，不根据迁移文件推断。
-- 会话历史、用户 CRUD、认证、RAG、任务持久化与定时调度尚未实现。不把产品目标、文档示例或目录规划表述为已实现能力。
+- 无密码账号登录和 X-User-Id 请求头仅用于 Demo 身份识别，不防止冒用。完整认证、用户管理、RAG、任务持久化与定时调度尚未实现，不把目标或目录规划表述为已实现能力。
 
 ## 工作入口与职责
 
@@ -30,7 +30,7 @@
 
 ## 接口与业务边界
 
-- 保持 `POST /api/chat` 和现有 `message`、`done`、`error` SSE 事件契约；内部重构不顺带修改路径、字段或成功语义。
+- 保持 `POST /api/chat`、conversation_id 与 X-User-Id，以及 `meta`、`message`、`done`、`error` SSE 契约；内部重构不顺带修改路径、字段或成功语义。
 - 模型请求和私密凭据只在后端处理。前端 `VITE_*` 变量会暴露给浏览器，不能放入密钥或数据库密码。
 - 用户输入、模型输出与任务结果是不可信内容，不能直接作为 shell、Python、SQL 字符串或不安全 HTML 执行。
 - 后台调度属于后端职责，不能依赖页面定时器或进程内临时列表冒充持久化。真实保存成功后才能报告任务已创建。

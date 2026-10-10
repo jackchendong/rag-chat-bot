@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import FetchedValue, String, text
+from sqlalchemy import FetchedValue, String, UniqueConstraint, text
 from sqlalchemy.dialects.mysql import BIGINT, DATETIME
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -9,11 +9,11 @@ from ..db.base import Base
 
 class User(Base):
     __tablename__ = 'users'
-    __table_args__ = {
+    __table_args__ = (UniqueConstraint('account', name='uq_users_account'), {
         'mysql_engine': 'InnoDB',
         'mysql_charset': 'utf8mb4',
         'mysql_collate': 'utf8mb4_unicode_ci',
-    }
+    })
 
     id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
     account: Mapped[str] = mapped_column(String(255), nullable=False)

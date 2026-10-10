@@ -1,8 +1,8 @@
 # 大模型对话 Demo 后端
 
-基于 FastAPI 的 Python 后端，目前提供 DeepSeek 单轮对话接口，通过 SSE 逐段返回回答。前端不在本次后端目录调整范围内，当前仍是占位页面。
+基于 FastAPI 的 Python 后端，提供账号登录或创建、用户存在性与会话归属校验、会话历史和 DeepSeek 多轮 SSE 对话。前端已接入，生产文件放在 static/。
 
-尚未实现：会话历史、知识库/RAG、任务持久化、定时调度、认证及限流。不要把目录规划或技能约定当作已实现功能。
+尚未实现：知识库/RAG、任务持久化、定时调度、正式认证及限流。当前无密码登录和用户 ID 请求头只适用于 Demo，知道他人账号或 ID 即可冒用，不应处理敏感数据或直接公开部署。
 
 ## 运行环境
 
@@ -87,6 +87,9 @@ app/
 │   │   ├── base.py              # SQLAlchemy ORM 基类
 │   │   └── session.py           # MySQL 引擎与 Session 工厂
 │   ├── models/user.py           # 用户表 ORM 映射，不是请求 Schema
+│   ├── models/conversation.py   # 会话、用户归属与生成占用标记
+│   ├── models/message.py        # 用户消息和助手回答
+│   ├── repositories/conversations.py # 同步存储适配、短事务与历史上下文
 │   ├── schemas/chat.py          # 外部请求字段及校验规则
 │   ├── domain/
 │   │   ├── chat.py              # 模型增量、回答事件及模型网关 Protocol
@@ -96,6 +99,7 @@ app/
 ├── .agents/skills/              # Python 与工程流程技能
 ├── .vscode/settings.json        # 本目录工作区的解释器和 Git Bash 配置
 ├── .env.example                 # 可提交的配置模板
+├── static/                      # 前端构建文件，挂载到 /static/
 ├── alembic.ini                  # 迁移配置，不存储数据库凭据
 ├── migrations/
 │   ├── env.py                   # 在线/离线迁移环境
@@ -123,18 +127,33 @@ app/
 
 这是适合当前 Demo 的轻量分层，不是完整 DDD 框架。参考 [fastapi-clean-architecture 的 app 结构](https://github.com/keanallen/fastapi-clean-architecture/tree/960f0a861e1024ae5495c3f812e95db238231484/app) 的 API、配置、Schema、Service 分工；没有照搬其用户认证、数据库、全局客户端或异常处理方式。
 
-`db/` 管理数据库连接与 Session，`models/` 定义 ORM 映射，`migrations/` 记录独立、可审查的数据库变更。当前没有用户 CRUD 或认证接口，不预建空的 Repository；模型 HTTP 适配不是数据库 Repository。
+`db/` 管理数据库连接与 Session，`models/` 定义 ORM 映射，`repositories/` 实现领域存储协议，`migrations/` 记录独立、可审查的数据库变更。服务通过线程池调用同步存储协议，不直接依赖 SQLAlchemy；模型 HTTP 适配不是数据库 Repository。
+
+## 前端静态文件
+
+`app/static/` 用于存放前端构建后的 HTML、JavaScript、CSS 和图片，使用 [FastAPI StaticFiles](https://fastapi.tiangolo.com/tutorial/static-files/) 挂载到 `/static`。目录路径根据后端模块位置解析，从仓库根目录或 `app/` 启动均可使用。
+
+- 将前端构建产物的内容放入本目录，例如 `static/index.html` 和 `static/assets/`；不要把整个 `dist` 文件夹再嵌套一层。
+- 放入 `index.html` 后，访问 `http://127.0.0.1:8000/static/` 打开页面；资源路径为 `/static/assets/...`。
+- 前端构建使用 `/static/` base。在 front/ 执行 `pnpm build:backend` 可将页面和资源直接构建到本目录，保留 `.gitkeep`，不自动清空外部输出目录。
+- 未构建页面时 `/static/` 返回 404；缺失资源同样返回 404，不自动回退到首页。当前页面使用组件状态切换而非 history 路由。
+- 静态路由不影响 `/api/chat`、`/docs` 和 `/openapi.json`，也不新增根路径 `/` 的页面。
+- 构建产物被 Git 忽略，仅保留 `.gitkeep`。本目录中的文件可被公开访问，不能放入 `.env`、数据库配置、密钥或用户私有数据。
 
 ## MySQL 与手动迁移
 
-已提供首个 migration，**尚未连接数据库或执行迁移**。现有 `app/.env` 保留 DeepSeek 配置并加入 MySQL 配置；该文件被 Git 忽略。新环境按 `.env.example` 填写自己的连接信息。迁移独立加载 MySQL 配置，不要求 DeepSeek 密钥。
+已提供两份 migration，开发过程**未连接远程数据库或执行在线迁移**。现有 app/.env 保留 DeepSeek 和 MySQL 配置，该文件被 Git 忽略。迁移独立加载 MySQL 配置，不要求 DeepSeek 密钥。
+
+第二份 `20261010_0002_conversations.py` 增加 account 唯一约束及 conversations、messages 两张表、外键和查询索引。账号依照现有 utf8mb4_unicode_ci 排序规则比较，不区分大小写；已存在重复账号时迁移会失败，需人工确认处理，不自动删除用户或合并历史。MySQL DDL 不保证整份迁移原子回滚，失败后需检查结构，不直接盲目重试。
+
+conversations 使用 UUID 字符串主键、user_id、title、内部 active_message_id 和时间字段；messages 使用 BIGINT 主键、conversation_id、role、content、status 和时间字段。接口 ID 均为字符串，日期为 UTC ISO 8601。回退第二份迁移会删除全部会话和消息，需提前备份。
 
 迁移创建 `users` 表，业务字段只有以下四个：
 
 | 字段 | 类型与规则 |
 |---|---|
 | `id` | `BIGINT UNSIGNED`，自增主键 |
-| `account` | `VARCHAR(255)`，非空，暂不添加唯一约束 |
+| `account` | `VARCHAR(255)`，非空，第二份迁移添加唯一约束 |
 | `created_at` | `DATETIME(6)`，非空，插入时由数据库生成 |
 | `updated_at` | `DATETIME(6)`，非空，插入时生成，数据实际变更时由数据库自动更新 |
 
@@ -163,26 +182,41 @@ Alembic 同时维护自己的 `alembic_version` 版本表。已存在 `users` �
 
 离线 SQL 不包含真实连接凭据。未来修改 ORM 后，可以手动使用 `alembic revision --autogenerate -m "describe_change"` 生成候选变更；**autogenerate 会连接数据库**，必须人工检查后再执行升级。首个 migration 的 `downgrade` 会删除整个用户表及数据，回退前需备份。
 
-启动服务仅创建惰性连接池，不连接数据库、不调用 `create_all()`、不自动迁移。连接在实际查询时建立，关闭服务时释放连接池。`get_db_session` 提供请求级 Session，关闭时回滚未提交事务；写操作必须由调用方明确提交。当前聊天接口不访问用户表，SSE 契约保持不变。PyMySQL 是同步驱动，后续同步查询放在普通 `def` 路由/线程池中，不直接阻塞 `async def` 路由的事件循环。生产环境应换用最小权限账号并配置加密连接。
+启动服务仅创建惰性连接池，不连接数据库、不调用 create_all、不自动迁移；登录、历史和聊天请求才实际访问数据库。存储适配每次操作使用独立 Session 和短事务，生成流期间不占用数据库事务。数据库连接、读取和写入超时均为 10 秒。同步路由由 FastAPI 在线程池执行，异步聊天通过 AnyIO 线程池调用存储。生产环境应换用最小权限账号并配置加密连接。
+
+## 登录与历史接口
+
+| 接口 | 说明 |
+|---|---|
+| POST /api/login | JSON `{"account":"alice"}`，去除首尾空格，1–255 字符；存在则查询，不存在则创建，返回 user_id 和 account |
+| GET /api/users/me | 校验用户并返回当前账号 |
+| POST /api/conversations | 创建会话，返回 conversation_id、title、updated_at |
+| GET /api/conversations | 当前用户会话，updated_at 倒序；offset 默认 0、limit 默认 30，最多 100 |
+| GET /api/conversations/{conversation_id}/messages | 消息按 ID 升序返回，默认最近 50 条、最多 100；before 为最早消息 ID，可分页读取更早记录 |
+
+除登录外，均需 `X-User-Id` 请求头。缺失、非法或不存在的用户返回 401；会话不存在或不属于用户返回 404；同一会话正在生成返回 409；数据库失败返回脱敏的 503。HTTP 错误使用 `{"code":"...","message":"..."}`，输入格式错误为 422。
+
+退出没有后端接口，前端取消请求、删除 localStorage 中的 account 和 user_id，不删除用户及历史。刷新时请求 users/me，用户不存在时清除状态，网络失败时保留状态并提供重试。
 
 ## SSE 对话接口
 
 ### 请求
 
-`POST /api/chat`，`Content-Type: application/json`：
+`POST /api/chat`，`Content-Type: application/json`，请求头 `X-User-Id` 必填：
 
 ```json
-{"message": "你好，请简单介绍一下自己"}
+{"conversation_id":"替换为创建会话接口返回的 UUID","message":"你好，请简单介绍一下自己"}
 ```
 
-`message` 必须是字符串，去除首尾空白后长度为 1–10000 个字符。拒绝额外字段、空白消息和非字符串值，输入错误返回 HTTP 422。每次只发送当前消息，不保存会话上下文。
+message 去除首尾空白后为 1–10000 字符，conversation_id 必须是 UUID，拒绝额外字段和非字符串消息。用户与归属校验在 SSE 建立前完成。前端只发送当前消息，后端从数据库最近 40 条记录中提取成功的完整轮次，最多保留含当前消息的 30000 字符上下文，不包含失败或取消的轮次；历史展示仍保留这些记录。
 
 Git Bash 调用示例（会调用真实模型并产生费用）：
 
 ```bash
 curl -N http://127.0.0.1:8000/api/chat \
   -H 'Content-Type: application/json' \
-  -d '{"message":"你好，请简单介绍一下自己"}'
+  -H 'X-User-Id: 替换为登录返回的用户ID' \
+  -d '{"conversation_id":"替换为创建会话返回的UUID","message":"你好，请简单介绍一下自己"}'
 ```
 
 ### 事件
@@ -190,6 +224,9 @@ curl -N http://127.0.0.1:8000/api/chat \
 返回 `text/event-stream`，每条事件以空行分隔，`data` 是 JSON：
 
 ```text
+event: meta
+data: {"conversation_id":"会话UUID","user_message_id":"1","assistant_message_id":"2"}
+
 event: message
 data: {"content": "你好"}
 
@@ -201,8 +238,9 @@ data: {"finish_reason": "stop", "truncated": false}
 
 ```
 
+- `meta`：已保存用户消息与助手占位记录，返回会话和消息 ID。
 - `message`：增量文字，客户端自行拼接；文字中的换行通过 JSON 转义，不破坏 SSE 帧。
-- `done`：正常流结束，发送一次；`finish_reason` 为上游结束原因，达到输出上限时 `truncated` 为 `true`。
+- `done`：回答全文已经提交数据库后发送一次；finish_reason 为上游结束原因，达到输出上限时 truncated 为 true。
 - `error`：安全错误码与提示，之后结束流，不再发送 `done`。
 
 错误示例：
@@ -218,6 +256,8 @@ data: {"code": "upstream_timeout", "message": "模型服务响应超时，请稍
 POST SSE 不能直接使用浏览器原生 `EventSource` 发送 JSON，应使用 `fetch` 流读取或支持 POST 的 SSE 客户端。反向代理需关闭缓冲并设置合适的读取超时，服务已返回 `Cache-Control: no-cache` 和 `X-Accel-Buffering: no`。
 
 断连时关闭 SSE 编码器、服务流和供应商流，释放上游连接；取消会继续传播，不转换为普通错误事件。但关闭本地连接不保证供应商已经停止生成或计费。
+
+消息状态为 generating、completed、failed 或 cancelled；停止和失败保留已生成的部分文本。完整生成总预算为 120 秒，回答存储限制为 60000 UTF-8 字节。生成前通过会话行锁提交 active_message_id，避免多个进程同时回复同一会话；进程异常退出遗留的占用在下一次请求时，超过 5 分钟才标记失败并释放。异常退出前未最终保存的增量不会恢复，不宣称支持断点续传。
 
 ## 扩展方式
 

@@ -20,16 +20,27 @@ description: 维护 app FastAPI 后端的路由、Schema、服务、领域契约
 | 模型网关、数据事件与安全错误 | `app/backend/domain/` |
 | 模型 HTTP 与供应商流解析 | `app/backend/providers/` |
 | .env 与配置校验 | `app/backend/core/config.py` |
+| MySQL 惰性引擎与请求 Session | `app/backend/db/`、`api/deps.py` |
+| 用户表 ORM 映射 | `app/backend/models/user.py` |
+| Alembic 版本与迁移 | `app/alembic.ini`、`app/migrations/` |
 
 ## 依赖与生命周期
 
 - API 调用服务，服务依赖领域协议，供应商适配实现协议；领域不能反向导入 API、配置、HTTPX 或 FastAPI。
 - `application.py` 是装配边界，可同时引用外部适配和服务，禁止从领域或服务反向导入应用。
 - 路由只处理 HTTP 与服务调用，不内联供应商请求；服务返回 ChatEvent 等普通数据，不返回 Response、HTTP 状态或 SSE 字符串。
-- 供应商解析模型私有字段，服务与 API 使用稳定的 ModelChunk；数据库模型与 HTTP Schema 也是不同职责，未来有持久化时再创建。
+- 供应商解析模型私有字段，服务与 API 使用稳定的 ModelChunk；数据库 ORM 与 HTTP Schema 是不同职责，不直接将 ORM 作为外部请求模型。
 - 使用应用级 lifespan 创建和关闭共享客户端，Depends 获取已装配服务，不在导入时创建网络客户端或读取密钥。
 - 通过服务注入和 ModelGateway 替换真实模型，测试不要求默认使用付费 API。服务不关闭应用拥有的客户端，但必须关闭自己迭代的流。
 - 保持标准包导入及现有 `main:app` 启动方式；从根目录启动用 `--app-dir app`，不用修改 sys.path，也不同时用不同模块名加载同一应用。
+
+## 数据库与迁移
+
+- SQLAlchemy 引擎和 Session 工厂由应用生命周期管理；导入和启动不发起数据库请求，不调用 create_all 或自动运行 Alembic。
+- 变更表结构同时维护 ORM 和独立 migration；历史 migration 不导入当前 ORM，以免模型变化影响历史升级。
+- 数据库凭据来自本地 .env，使用 URL.create 构造连接信息，不拼接密码、不写入 alembic.ini 或日志。
+- 用户要求手动迁移时，只检查语法、元数据、版本图或生成离线 SQL，不运行在线 upgrade、downgrade、autogenerate、current 或数据库探活。
+- 请求 Session 由 Depends 关闭，写入明确提交，失败回滚；同步驱动 I/O 不直接阻塞异步事件循环。保持 UTC 会话时区和数据库生成时间的约定。
 
 ## SSE 改动检查
 

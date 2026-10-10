@@ -9,6 +9,7 @@
 - Python 3.10，当前本地解释器为 3.10.11。
 - 虚拟环境位于 `.venv/`，依赖使用 pip 与 `requirements.txt` 管理。
 - FastAPI / Starlette 提供 HTTP 与流式响应，HTTPX 调用模型，python-dotenv 读取 `.env`，Pydantic 校验配置和请求。
+- MySQL 使用 SQLAlchemy 2.0 + PyMySQL，数据库版本变更由 Alembic 管理。
 
 以下命令均在本目录 `app/` 中执行。
 
@@ -34,6 +35,11 @@ Windows Git Bash：
 | `DEEPSEEK_BASE_URL` | 默认 `https://api.deepseek.com`，必须为无凭据、查询参数和片段的 HTTPS 地址 |
 | `DEEPSEEK_MODEL` | 默认 `deepseek-flash`，可配置为账户支持的模型 |
 | `DEEPSEEK_TIMEOUT_SECONDS` | 大于 0 且不超过 600 的有限秒数，默认 60；用于网络读写和连接池等待，连接超时为 10 秒 |
+| `MYSQL_HOST` | 必填，MySQL 主机 |
+| `MYSQL_PORT` | 默认 3306，范围 1–65535 |
+| `MYSQL_USERNAME` | 必填，数据库用户名 |
+| `MYSQL_PASSWORD` | 必填，数据库密码，仅保存于本地 `.env` 或环境变量 |
+| `MYSQL_DATABASE` | 必填，已有数据库名称；迁移不会创建数据库本身 |
 
 系统环境变量优先于 `.env`。配置在应用启动时读取，不在模块导入时发起网络请求或加载密钥。`.env` 根据模块位置定位到本目录，不依赖终端工作目录；改动配置后重启服务。
 
@@ -77,6 +83,10 @@ app/
 │   │   ├── responses.py         # SSE 编码、响应头和断连清理
 │   │   └── routes/chat.py       # POST /api/chat 路由
 │   ├── core/config.py           # .env、环境变量和配置校验
+│   ├── db/
+│   │   ├── base.py              # SQLAlchemy ORM 基类
+│   │   └── session.py           # MySQL 引擎与 Session 工厂
+│   ├── models/user.py           # 用户表 ORM 映射，不是请求 Schema
 │   ├── schemas/chat.py          # 外部请求字段及校验规则
 │   ├── domain/
 │   │   ├── chat.py              # 模型增量、回答事件及模型网关 Protocol
@@ -86,6 +96,11 @@ app/
 ├── .agents/skills/              # Python 与工程流程技能
 ├── .vscode/settings.json        # 本目录工作区的解释器和 Git Bash 配置
 ├── .env.example                 # 可提交的配置模板
+├── alembic.ini                  # 迁移配置，不存储数据库凭据
+├── migrations/
+│   ├── env.py                   # 在线/离线迁移环境
+│   ├── script.py.mako           # 后续 migration 模板
+│   └── versions/20261010_0001_create_users.py
 ├── requirements.txt
 ├── AGENTS.md
 └── README.md
@@ -108,7 +123,47 @@ app/
 
 这是适合当前 Demo 的轻量分层，不是完整 DDD 框架。参考 [fastapi-clean-architecture 的 app 结构](https://github.com/keanallen/fastapi-clean-architecture/tree/960f0a861e1024ae5495c3f812e95db238231484/app) 的 API、配置、Schema、Service 分工；没有照搬其用户认证、数据库、全局客户端或异常处理方式。
 
-当前没有数据库，因此不创建空的 `db/`、ORM `models/` 或 `repositories/`。后续引入任务或会话持久化时，再为实际数据访问增加这些职责；模型 HTTP 适配不是数据库 Repository。
+`db/` 管理数据库连接与 Session，`models/` 定义 ORM 映射，`migrations/` 记录独立、可审查的数据库变更。当前没有用户 CRUD 或认证接口，不预建空的 Repository；模型 HTTP 适配不是数据库 Repository。
+
+## MySQL 与手动迁移
+
+已提供首个 migration，**尚未连接数据库或执行迁移**。现有 `app/.env` 保留 DeepSeek 配置并加入 MySQL 配置；该文件被 Git 忽略。新环境按 `.env.example` 填写自己的连接信息。迁移独立加载 MySQL 配置，不要求 DeepSeek 密钥。
+
+迁移创建 `users` 表，业务字段只有以下四个：
+
+| 字段 | 类型与规则 |
+|---|---|
+| `id` | `BIGINT UNSIGNED`，自增主键 |
+| `account` | `VARCHAR(255)`，非空，暂不添加唯一约束 |
+| `created_at` | `DATETIME(6)`，非空，插入时由数据库生成 |
+| `updated_at` | `DATETIME(6)`，非空，插入时生成，数据实际变更时由数据库自动更新 |
+
+表使用 InnoDB、utf8mb4 和 utf8mb4_unicode_ci。应用和在线迁移的连接初始化时将会话时区设为 UTC；DATETIME 本身不带时区，读取后按 UTC 解释。其他客户端写入时也需要保持 UTC 会话时区。时间默认值和自动更新按 [SQLAlchemy MySQL 文档](https://docs.sqlalchemy.org/en/20/dialects/mysql.html#rendering-on-update-current-timestamp-for-mysql-mariadb-s-explicit-defaults-for-timestamp) 显式声明。
+
+先确认目标 `chat` 数据库已存在、连接账号有建表权限，并安装 `requirements.txt`。以下命令在 `app/` 中由你手动执行：
+
+```bash
+./.venv/Scripts/python.exe -m alembic upgrade head
+```
+
+Alembic 同时维护自己的 `alembic_version` 版本表。已存在 `users` 时不要直接执行首个迁移，应先检查现有结构和迁移基线；不要用 `stamp` 冒充已完成建表。
+
+只查看迁移文件版本（不连接数据库）：
+
+```bash
+./.venv/Scripts/python.exe -m alembic heads
+./.venv/Scripts/python.exe -m alembic history
+```
+
+只生成 SQL 供审查、不连接数据库（[Alembic 离线模式](https://alembic.sqlalchemy.org/en/latest/offline.html)）：
+
+```bash
+./.venv/Scripts/python.exe -m alembic upgrade head --sql
+```
+
+离线 SQL 不包含真实连接凭据。未来修改 ORM 后，可以手动使用 `alembic revision --autogenerate -m "describe_change"` 生成候选变更；**autogenerate 会连接数据库**，必须人工检查后再执行升级。首个 migration 的 `downgrade` 会删除整个用户表及数据，回退前需备份。
+
+启动服务仅创建惰性连接池，不连接数据库、不调用 `create_all()`、不自动迁移。连接在实际查询时建立，关闭服务时释放连接池。`get_db_session` 提供请求级 Session，关闭时回滚未提交事务；写操作必须由调用方明确提交。当前聊天接口不访问用户表，SSE 契约保持不变。PyMySQL 是同步驱动，后续同步查询放在普通 `def` 路由/线程池中，不直接阻塞 `async def` 路由的事件循环。生产环境应换用最小权限账号并配置加密连接。
 
 ## SSE 对话接口
 
@@ -176,7 +231,7 @@ POST SSE 不能直接使用浏览器原生 `EventSource` 发送 JSON，应使用
 当前没有正式测试、lint 或静态类型检查配置。可在本目录运行基础检查：
 
 ```bash
-./.venv/Scripts/python.exe -m compileall -q main.py backend
+./.venv/Scripts/python.exe -m compileall -q main.py backend migrations
 ./.venv/Scripts/python.exe -m pip check
 ./.venv/Scripts/python.exe .agents/skills/code-change-verification/scripts/validate_skills.py
 ```

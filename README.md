@@ -4,6 +4,8 @@
 
 > 前端暂为 Hello World，尚未接入后端。后端已实现 DeepSeek 单轮对话 SSE 接口；会话历史、定时任务与 RAG 尚未实现。
 
+后端已加入 MySQL 连接配置、四字段用户表 ORM 与 Alembic 初始迁移，尚未执行迁移；手动升级步骤见 `app/README.md` 的“MySQL 与手动迁移”。服务启动不会自动建表或迁移，当前没有用户 CRUD 或认证接口。
+
 ## 功能目标
 
 - **普通对话**：用户发送消息，由大模型生成回复，支持日常问答等简单交互。
@@ -128,6 +130,8 @@ cd app
 
 若尚无虚拟环境，先使用 Python 3.10 执行 `python -m venv .venv`。PowerShell 中可以用 `& ./.venv/Scripts/python.exe` 调用同一解释器。
 
+根目录 `requirements.txt` 仅引用 `app/requirements.txt`，方便从仓库根目录打开项目时识别 Python 依赖；后端依赖版本仍统一维护在 `app/requirements.txt`。PyCharm 若提示包未列入 requirements，请确认项目解释器为 `app/.venv/Scripts/python.exe`，并在 Python → Tools → Integrated Tools 中将 Package requirements file for SDK 指向 `app/requirements.txt`（参见 [官方配置说明](https://www.jetbrains.com/help/pycharm/managing-dependencies.html#configure-requirements)）。不要通过关闭检查来隐藏提示。
+
 配置位于 `app/.env`，新环境可以复制 `.env.example` 为 `.env` 后填写自己的密钥。配置项：
 
 | 变量 | 用途 |
@@ -136,6 +140,9 @@ cd app
 | `DEEPSEEK_BASE_URL` | HTTPS 服务地址，默认 `https://api.deepseek.com` |
 | `DEEPSEEK_MODEL` | 默认 `deepseek-flash`，可替换为账户支持的模型 |
 | `DEEPSEEK_TIMEOUT_SECONDS` | 单次网络读写/连接池等待超时，默认 60 秒；连接超时为 10 秒，不是完整回答总耗时上限 |
+| `MYSQL_HOST` / `MYSQL_PORT` | 数据库主机与端口，端口默认 3306 |
+| `MYSQL_USERNAME` / `MYSQL_PASSWORD` | 数据库账号与密码，仅放本地 `.env` 或环境变量 |
+| `MYSQL_DATABASE` | 已有数据库名称，迁移不创建数据库本身 |
 
 系统环境变量优先于 `.env`。服务默认监听 `127.0.0.1:8000`，接口文档为 `http://127.0.0.1:8000/docs`。当前没有认证或限流，不应直接暴露到公网。
 

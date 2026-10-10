@@ -30,7 +30,9 @@
 - `backend/services/`：业务编排，仅依赖领域契约，不导入 FastAPI、HTTPX 或供应商实现。
 - `backend/domain/`：标准库数据类型、模型网关协议和安全业务错误，不依赖外层实现。
 - `backend/providers/`：模型供应商网络适配与数据解析；`backend/core/`：配置加载与校验。
-- 当前没有数据库，不创建空的 ORM、Repository 或 DB 目录。分层实现前读取 `.agents/skills/fastapi-architecture/SKILL.md`。
+- 数据库采用 MySQL、SQLAlchemy 2.0 和 PyMySQL；`backend/db/` 管理连接与 Session，`backend/models/` 管理 ORM，`migrations/` 与 Alembic 管理版本。当前用户表仅包含 id、account、created_at、updated_at，不预建空 Repository。分层实现前读取 `.agents/skills/fastapi-architecture/SKILL.md`。
+- 数据库配置从 `.env` 和环境变量加载，密码使用 SecretStr，不打印连接凭据。启动只创建惰性引擎，不自动连接、建表或迁移；迁移由用户手动执行。未明确授权时不连接远程数据库，不运行在线迁移、autogenerate 或探活。
+- Session 按请求关闭，事务由业务明确提交；同步 PyMySQL 查询不直接放在异步路由中。数据库会话使用 UTC，ORM 与迁移保持字段、默认值和自动更新时间一致。
 
 - 保持当前实现简单；职责增长后再按需拆分请求入口、业务服务、模型适配、任务调度、持久化、配置和测试，不预建空目录。
 - API 层负责输入校验和响应映射，业务层不依赖前端展示逻辑，模型和存储调用保持明确边界。

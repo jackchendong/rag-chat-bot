@@ -6,7 +6,7 @@ import httpx
 from pydantic import BaseModel
 
 from ..core.config import Settings
-from ..domain.chat import ModelChunk, ModelMessage
+from ..domain.chat import ModelChunk, ModelGateway, ModelMessage
 from ..domain.errors import ModelServiceError
 
 logger = logging.getLogger(__name__)
@@ -44,7 +44,7 @@ async def upstream_events(response: httpx.Response) -> AsyncIterator[str]:
         raise ValueError('Incomplete upstream event')
 
 
-class DeepSeekClient:
+class DeepSeekClient(ModelGateway):
     def __init__(self, client: httpx.AsyncClient, settings: Settings) -> None:
         self.client = client
         self.settings = settings

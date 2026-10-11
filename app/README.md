@@ -94,7 +94,7 @@ app/
 │   ├── repositories/conversations.py # 同步存储适配、短事务与历史上下文
 │   ├── schemas/chat.py          # 外部请求字段及校验规则
 │   ├── domain/
-│   │   ├── chat.py              # 模型增量、回答事件及模型网关 Protocol
+│   │   ├── chat.py              # 模型增量、回答事件及模型网关抽象基类
 │   │   └── errors.py            # 安全的模型服务错误
 │   ├── services/chat.py         # 回答流程，生成框架无关的业务事件
 │   └── providers/deepseek.py    # DeepSeek HTTP 请求、流解析和错误转换
@@ -122,14 +122,14 @@ app/
 ```
 
 - **API**：处理 HTTP、输入校验、依赖注入与 SSE 传输，不直接调用模型供应商。
-- **服务**：面向 `ModelGateway` 协议编排回答，输出普通数据对象，不导入 FastAPI、HTTPX 或供应商实现。
-- **领域契约**：使用标准库类型、dataclass 和 Protocol，不依赖 Web、配置或网络层。
+- **服务**：面向 `ModelGateway` 抽象基类编排回答，输出普通数据对象，不导入 FastAPI、HTTPX 或供应商实现。
+- **领域契约**：使用标准库类型、dataclass、`ABC` 和 `@abstractmethod`，不依赖 Web、配置或网络层。`DeepSeekClient(ModelGateway)` 和 `ConversationRepository(ConversationStore)` 显式继承领域抽象基类；缺少抽象方法实现的子类不能实例化。
 - **供应商适配**：负责实际网络请求、供应商数据校验和安全错误转换，不序列化前端 SSE，也不关闭应用拥有的 HTTP 客户端。
 - **应用装配**：在 lifespan 内加载配置、创建共享 HTTP 客户端和服务，关闭时回收客户端；导入入口本身不会发送模型请求。
 
 这是适合当前 Demo 的轻量分层，不是完整 DDD 框架。参考 [fastapi-clean-architecture 的 app 结构](https://github.com/keanallen/fastapi-clean-architecture/tree/960f0a861e1024ae5495c3f812e95db238231484/app) 的 API、配置、Schema、Service 分工；没有照搬其用户认证、数据库、全局客户端或异常处理方式。
 
-`db/` 管理数据库连接与 Session，`models/` 定义 ORM 映射，`repositories/` 实现领域存储协议，`migrations/` 记录独立、可审查的数据库变更。服务通过线程池调用同步存储协议，不直接依赖 SQLAlchemy；模型 HTTP 适配不是数据库 Repository。
+`db/` 管理数据库连接与 Session，`models/` 定义 ORM 映射，`repositories/` 显式继承并实现领域存储抽象基类，`migrations/` 记录独立、可审查的数据库变更。服务通过线程池调用同步存储方法，不直接依赖 SQLAlchemy；模型 HTTP 适配不是数据库 Repository。
 
 ## 前端静态文件
 
@@ -290,7 +290,7 @@ data: {"finish_reason":"cancelled","truncated":false,"cancelled":true}
 ## 扩展方式
 
 - 新接口：在 `api/routes/` 添加路由，外部字段放 `schemas/`，在 `application.py` 注册。不要为目录分层改变现有 `/api/chat` 为 `/api/v1/chat`。
-- 新模型供应商：实现 `ModelGateway.stream_answer`，将供应商输出转为 `ModelChunk`，将可报告的错误转为 `ModelServiceError`，在应用工厂装配；无需修改聊天路由或服务。
+- 新模型供应商：显式继承 `ModelGateway` 并实现 `stream_answer`，将供应商输出转为 `ModelChunk`，将可报告的错误转为 `ModelServiceError`，在应用工厂装配；无需修改聊天路由或服务。测试替身也应显式继承对应抽象基类并实现所需抽象方法。
 - 新业务：先在服务层实现用例，需要共享契约时再增加领域类型；不要把全部规则塞回 `main.py`。
 - 持久化与调度：有实际需求后新增存储适配与后台生命周期，明确事务、认领和重启恢复语义，不使用内存列表冒充持久化。
 

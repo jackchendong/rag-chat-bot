@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..domain.chat import ModelMessage
-from ..domain.conversations import ConversationInfo, MessageInfo, MessageStatus, PreparedTurn, UserInfo
+from ..domain.conversations import ConversationInfo, ConversationStore, MessageInfo, MessageStatus, PreparedTurn, UserInfo
 from ..domain.errors import ConversationError
 from ..models import Conversation, Message, User
 
@@ -21,7 +21,7 @@ def conversation_info(conversation: Conversation) -> ConversationInfo:
     return ConversationInfo(conversation.id, conversation.title, conversation.updated_at.replace(tzinfo=timezone.utc))
 
 
-class ConversationRepository:
+class ConversationRepository(ConversationStore):
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self.session_factory = session_factory
 

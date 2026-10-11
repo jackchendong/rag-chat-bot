@@ -1,6 +1,7 @@
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, Protocol
+from typing import Literal
 
 from .chat import ModelMessage
 
@@ -37,13 +38,39 @@ class PreparedTurn:
     messages: list[ModelMessage]
 
 
-class ConversationStore(Protocol):
-    def login(self, account: str) -> UserInfo: ...
-    def get_user(self, user_id: int) -> UserInfo: ...
-    def create_conversation(self, user_id: int) -> ConversationInfo: ...
-    def list_conversations(self, user_id: int, offset: int, limit: int) -> list[ConversationInfo]: ...
-    def list_messages(self, user_id: int, conversation_id: str, before: int | None, limit: int) -> list[MessageInfo]: ...
-    def prepare_turn(self, user_id: int, conversation_id: str, message: str) -> PreparedTurn: ...
-    def finish_turn(self, turn: PreparedTurn, content: str, status: MessageStatus) -> MessageStatus: ...
-    def stop_turn(self, user_id: int, conversation_id: str, assistant_message_id: int) -> bool: ...
-    def is_turn_cancelled(self, turn: PreparedTurn) -> bool: ...
+class ConversationStore(ABC):
+    @abstractmethod
+    def login(self, account: str) -> UserInfo:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_user(self, user_id: int) -> UserInfo:
+        raise NotImplementedError
+
+    @abstractmethod
+    def create_conversation(self, user_id: int) -> ConversationInfo:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_conversations(self, user_id: int, offset: int, limit: int) -> list[ConversationInfo]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_messages(self, user_id: int, conversation_id: str, before: int | None, limit: int) -> list[MessageInfo]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def prepare_turn(self, user_id: int, conversation_id: str, message: str) -> PreparedTurn:
+        raise NotImplementedError
+
+    @abstractmethod
+    def finish_turn(self, turn: PreparedTurn, content: str, status: MessageStatus) -> MessageStatus:
+        raise NotImplementedError
+
+    @abstractmethod
+    def stop_turn(self, user_id: int, conversation_id: str, assistant_message_id: int) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def is_turn_cancelled(self, turn: PreparedTurn) -> bool:
+        raise NotImplementedError

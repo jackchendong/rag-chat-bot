@@ -1,11 +1,11 @@
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 
 from .api.routes.chat import router
 from .api.routes.conversations import router as conversation_router
@@ -37,12 +37,30 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
 
 def create_app() -> FastAPI:
-    application = FastAPI(title='大模型对话 Demo', lifespan=lifespan)
+    application = FastAPI(
+        title='大模型对话 Demo',
+        lifespan=lifespan,
+        docs_url='/docs',
+        redoc_url='/api/redoc',
+        openapi_url='/api/openapi.json',
+        swagger_ui_oauth2_redirect_url='/docs/oauth2-redirect',
+    )
     application.include_router(router, prefix='/api')
     application.include_router(conversation_router, prefix='/api')
     application.add_exception_handler(ConversationError, handle_conversation_error)
     static_directory = Path(__file__).resolve().parents[1] / 'static'
     application.mount('/static', StaticFiles(directory=static_directory, html=True), name='static')
+
+    @application.middleware('http')
+    async def redirect_to_frontend(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        path = request.url.path
+        if path.startswith(('/api', '/docs', '/static/')):
+            return await call_next(request)
+        return RedirectResponse(url=request.url_for('static', path='index.html'), status_code=307)
+
     return application
 
 

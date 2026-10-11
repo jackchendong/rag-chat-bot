@@ -63,7 +63,7 @@ Windows PowerShell：
 
 Linux/macOS 使用 `.venv/bin/python` 替换上述 Windows 解释器路径。
 
-默认监听 `http://127.0.0.1:8000`，接口文档位于 `/docs`，OpenAPI 位于 `/openapi.json`。`--reload` 仅用于开发；没有认证与限流，不应直接暴露到公网。
+默认监听 `http://127.0.0.1:8000`，接口文档位于 `/docs`，ReDoc 位于 `/api/redoc`，OpenAPI 位于 `/api/openapi.json`。`--reload` 仅用于开发；没有认证与限流，不应直接暴露到公网。
 
 若从仓库根目录启动，使用 Uvicorn 的应用目录参数，不修改 `sys.path`：
 
@@ -139,7 +139,8 @@ app/
 - 放入 `index.html` 后，访问 `http://127.0.0.1:8000/static/` 打开页面；资源路径为 `/static/assets/...`。
 - 前端构建使用 `/static/` base。在 `front/` 执行 `pnpm build` 可将页面和资源直接构建到本目录；`pnpm build:backend` 是同一命令的别名。构建保留 `.gitkeep`，不自动清空输出目录。
 - 未构建页面时 `/static/` 返回 404；缺失资源同样返回 404，不自动回退到首页。当前页面使用组件状态切换而非 history 路由。
-- 静态路由不影响 `/api/chat`、`/docs` 和 `/openapi.json`，也不新增根路径 `/` 的页面。
+- 非 `/api`、`/docs` 开头且不在 `/static/` 下的路径（包括 `/`）返回 HTTP 307，重定向到 `/static/index.html`。`/static/` 下继续直接提供页面和资源，避免重定向循环；缺失资源保持 404。
+- `/api`、`/docs` 开头的请求保留路由行为，未知路径返回 404。接口文档保留在 `/docs`，使用 `/api/openapi.json` 加载接口定义；旧 `/openapi.json` 路径会重定向到前端入口。
 - 构建产物被 Git 忽略，仅保留 `.gitkeep`。本目录中的文件可被公开访问，不能放入 `.env`、数据库配置、密钥或用户私有数据。
 
 ## MySQL 与手动迁移

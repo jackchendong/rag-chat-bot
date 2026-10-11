@@ -20,7 +20,7 @@ async def chat(
     body: ChatRequest, service: Annotated[ChatService, Depends(get_chat_service)],
     user: Annotated[UserInfo, Depends(get_current_user)],
 ) -> StreamingResponse:
-    turn = await service.prepare(int(user.user_id), str(body.conversation_id), body.message)
+    turn = await service.prepare(int(user.user_id), str(body.conversation_id), body.message, body.skill_names)
     return SSEStreamingResponse(service.answer(turn), lambda: service.cancel(turn))
 
 

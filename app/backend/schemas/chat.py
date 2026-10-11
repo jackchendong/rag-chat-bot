@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 
 class ChatRequest(BaseModel):
@@ -10,6 +10,7 @@ class ChatRequest(BaseModel):
     message: Annotated[
         str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=10000)
     ]
+    skill_names: list[Annotated[str, StringConstraints(strict=True, pattern=r'^[a-z0-9][a-z0-9-]{0,63}$')]] = Field(default_factory=list, max_length=8)
 
 
 class ChatStopRequest(BaseModel):

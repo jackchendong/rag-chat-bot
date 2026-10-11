@@ -6,7 +6,7 @@ import httpx
 from pydantic import BaseModel
 
 from ..core.config import Settings
-from ..domain.chat import ModelChunk, ModelGateway, ModelMessage
+from ..domain.chat import ModelChunk, ModelGateway, ModelMessage, ToolCall
 from ..domain.errors import ModelServiceError
 
 logger = logging.getLogger(__name__)
@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 class Delta(BaseModel):
     content: str | None = None
+    tool_calls: list[dict[str, object]] | None = None
 
 
 class Choice(BaseModel):
@@ -49,14 +50,17 @@ class DeepSeekClient(ModelGateway):
         self.client = client
         self.settings = settings
 
-    async def stream_answer(self, messages: list[ModelMessage]) -> AsyncGenerator[ModelChunk, None]:
+    async def stream_answer(self, messages: list[ModelMessage], tools: list[dict[str, object]] | None = None) -> AsyncGenerator[ModelChunk, None]:
         payload = {
             'model': self.settings.model,
-            'messages': [{'role': message.role, 'content': message.content} for message in messages],
+            'messages': [message.as_dict() for message in messages],
             'stream': True,
             'max_tokens': 1024,
             'thinking': {'type': 'disabled'},
         }
+        if tools:
+            payload['tools'] = tools
+            payload['tool_choice'] = 'auto'
         logger.info('%s', json.dumps(payload, ensure_ascii=False))
         try:
             async with self.client.stream(
@@ -74,13 +78,35 @@ class DeepSeekClient(ModelGateway):
                 if 'text/event-stream' not in response.headers.get('content-type', '').lower():
                     raise ModelServiceError('invalid_stream', '模型服务未返回 SSE 响应')
                 finish_reason: str | None = None
+                calls: dict[int, dict[str, str]] = {}
                 async for payload in upstream_events(response):
                     if payload == '[DONE]':
-                        yield ModelChunk(finish_reason=finish_reason, done=True)
+                        completed = tuple(ToolCall(value['id'], value['name'], value['arguments']) for _, value in sorted(calls.items()))
+                        if (any(not call.id or not call.name for call in completed)
+                                or len({call.id for call in completed}) != len(completed)
+                                or bool(completed) != (finish_reason == 'tool_calls')
+                                or finish_reason is None):
+                            raise ValueError('Invalid tool call completion')
+                        yield ModelChunk(finish_reason=finish_reason, done=True, tool_calls=completed)
                         return
                     chunk = CompletionChunk.model_validate_json(payload)
                     if chunk.choices:
                         choice = chunk.choices[0]
+                        for delta in choice.delta.tool_calls or []:
+                            index = delta.get('index')
+                            if type(index) is not int or not 0 <= index < 50:
+                                raise ValueError('Invalid tool index')
+                            value = calls.setdefault(index, {'id': '', 'name': '', 'arguments': ''})
+                            function = delta.get('function') or {}
+                            if not isinstance(function, dict) or delta.get('type', 'function') != 'function':
+                                raise ValueError('Invalid tool function')
+                            for key, fragment in (('id', delta.get('id')), ('name', function.get('name')), ('arguments', function.get('arguments'))):
+                                if fragment is not None:
+                                    if not isinstance(fragment, str):
+                                        raise ValueError('Invalid tool fragment')
+                                    value[key] += fragment
+                                    if len(value[key]) > (16000 if key == 'arguments' else 128):
+                                        raise ValueError('Tool call too large')
                         if choice.delta.content:
                             yield ModelChunk(content=choice.delta.content)
                         if choice.finish_reason is not None:

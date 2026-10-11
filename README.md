@@ -2,9 +2,9 @@
 
 一个采用前后端分离架构的大模型对话演示项目，分为前端和后端两个模块，目标是支持普通对话，以及通过对话创建并在后台运行定时任务。
 
-> 已实现账号登录、退出、会话历史及多轮文本 SSE 对话。定时任务与 RAG 尚未实现。
+> 已实现账号登录、退出、会话历史、多轮 SSE、function calling、Skills、联网、受限 Shell 与 Agent loop 执行审计。定时调度与 RAG 尚未实现。
 
-后端使用 MySQL 存储 users、conversations 和 messages，新增 Alembic 迁移由你手动执行；步骤见 app/README.md。服务启动不会自动建表或迁移。账号登录无密码，用户 ID 请求头只是 Demo 身份识别，不能防止冒用，不适合公开部署或存储敏感信息。
+后端使用 MySQL 存储 users、conversations、messages、agent_tasks 和 agent_task_steps，新增 Alembic 迁移由你手动执行；步骤见 app/README.md。服务启动不会自动建表或迁移。账号登录无密码，用户 ID 请求头只是 Demo 身份识别，不能防止冒用，不适合公开部署或存储敏感信息。
 
 ## 功能目标
 
@@ -129,7 +129,9 @@ pnpm preview
 cd app
 ./.venv/Scripts/python.exe -m pip install -r requirements.txt
 ./.venv/Scripts/python.exe -m uvicorn main:app --reload
+python -m alembic upgrade head # 执行migration
 ```
+
 
 若尚无虚拟环境，先使用 Python 3.10 执行 `python -m venv .venv`。PowerShell 中可以用 `& ./.venv/Scripts/python.exe` 调用同一解释器。
 
@@ -179,7 +181,7 @@ data: {"finish_reason": "stop", "truncated": false, "cancelled": false}
 
 ```
 
-模型输出最多 1024 个 token，使用非思考模式；达到上限时 `done.truncated` 为 `true`。正常完成发送一次 `done`；上游错误、超时、无效数据或意外断流发送 `error` 并结束，不再发送成功事件：
+每轮模型输出最多 1024 个 token，使用非思考模式；达到上限时 `done.truncated` 为 `true`。正常完成发送一次 `done`；上游错误、超时、无效数据或意外断流发送 `error` 并结束，不再发送成功事件：
 
 ```text
 event: error
@@ -210,3 +212,7 @@ data: {"code": "upstream_timeout", "message": "模型服务响应超时，请稍
 ## 项目边界
 
 本项目定位为演示用途。生产使用前，还需完善身份认证、任务权限、资源限制、凭据保护及运行监控等能力。
+
+通用网页搜索默认 AGENT_WEB_PROVIDER=auto：有 TAVILY_API_KEY 用 Tavily，没有密钥用公开搜索与网页读取；Agent 循环、工具限制和 Skills 配置均有注释。需人工升级迁移到 20261011_0003 后使用。执行记录可从 /api/agent/tasks 查询，具体流程、API 与 Shell 边界见 [后端说明](app/README.md#function-callingskills-与-agent-loop)。
+
+天气查询已接入免密钥 Open-Meteo get_weather（默认 AGENT_WEATHER_ENABLED=true），不依赖 Tavily；通用网页搜索也支持免密钥公开方案，TAVILY_API_KEY 为可选。详情见后端 README。

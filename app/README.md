@@ -137,7 +137,7 @@ app/
 
 - 将前端构建产物的内容放入本目录，例如 `static/index.html` 和 `static/assets/`；不要把整个 `dist` 文件夹再嵌套一层。
 - 放入 `index.html` 后，访问 `http://127.0.0.1:8000/static/` 打开页面；资源路径为 `/static/assets/...`。
-- 前端构建使用 `/static/` base。在 front/ 执行 `pnpm build:backend` 可将页面和资源直接构建到本目录，保留 `.gitkeep`，不自动清空外部输出目录。
+- 前端构建使用 `/static/` base。在 `front/` 执行 `pnpm build` 可将页面和资源直接构建到本目录；`pnpm build:backend` 是同一命令的别名。构建保留 `.gitkeep`，不自动清空输出目录。
 - 未构建页面时 `/static/` 返回 404；缺失资源同样返回 404，不自动回退到首页。当前页面使用组件状态切换而非 history 路由。
 - 静态路由不影响 `/api/chat`、`/docs` 和 `/openapi.json`，也不新增根路径 `/` 的页面。
 - 构建产物被 Git 忽略，仅保留 `.gitkeep`。本目录中的文件可被公开访问，不能放入 `.env`、数据库配置、密钥或用户私有数据。

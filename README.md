@@ -115,7 +115,7 @@ pnpm build:backend
 pnpm preview
 ```
 
-`pnpm build` 包含类型检查，构建产物位于 `front/dist/`。`pnpm preview` 用于本地预览构建产物，不是生产服务器。
+`pnpm build` 包含类型检查，构建产物直接写入 `app/static/`；`pnpm build:backend` 是同一构建命令的别名。输出目录不会自动清空，以保留 `.gitkeep` 和其他现有文件。`pnpm preview` 使用该目录预览构建产物，不是生产服务器。
 
 ### 后端
 

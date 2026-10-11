@@ -5,6 +5,10 @@ import { defineConfig } from 'vite'
 
 export default defineConfig(({ command }) => ({
   base: command === 'build' ? '/static/' : '/',
+  build: {
+    outDir: fileURLToPath(new URL('../app/static', import.meta.url)),
+    emptyOutDir: false,
+  },
   server: { proxy: { '/api': 'http://127.0.0.1:8000' } },
   preview: { proxy: { '/api': 'http://127.0.0.1:8000' } },
   plugins: [vue(), tailwindcss()],

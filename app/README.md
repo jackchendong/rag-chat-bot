@@ -25,6 +25,7 @@ Windows Git Bash：
 
 ```bash
 ./.venv/Scripts/python.exe -m pip install -r requirements.txt
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
 新环境中，复制 `.env.example` 为 `.env` 并填写自己的密钥。已有 `.env` 时保留它，不覆盖配置。
@@ -51,6 +52,7 @@ Windows Git Bash：
 
 ```bash
 ./.venv/Scripts/python.exe -m uvicorn main:app --reload
+python  -m uvicorn main:app --reload
 ```
 
 Windows PowerShell：

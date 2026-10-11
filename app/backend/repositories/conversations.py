@@ -125,18 +125,48 @@ class ConversationRepository:
             session.commit()
             return turn
 
-    def finish_turn(self, turn: PreparedTurn, content: str, status: MessageStatus) -> None:
+    def stop_turn(self, user_id: int, conversation_id: str, assistant_message_id: int) -> bool:
+        with self.session() as session:
+            conversation = self.owned_conversation(session, user_id, conversation_id, lock=True)
+            message = session.get(Message, assistant_message_id)
+            if message is None or message.conversation_id != conversation_id or message.role != 'assistant':
+                raise ConversationError('conversation_not_found', '回答记录不存在')
+            if message.status == 'cancelled':
+                return True
+            if conversation.active_message_id != assistant_message_id or message.status != 'generating':
+                return False
+            message.status = 'cancelled'
+            conversation.updated_at = utc_now()
+            session.commit()
+            return True
+
+    def is_turn_cancelled(self, turn: PreparedTurn) -> bool:
+        with self.session() as session:
+            message = session.get(Message, int(turn.assistant_message_id))
+            return message is not None and message.status == 'cancelled'
+
+    def finish_turn(self, turn: PreparedTurn, content: str, status: MessageStatus) -> MessageStatus:
         with self.session() as session:
             conversation = session.scalar(select(Conversation).where(Conversation.id == turn.conversation_id).with_for_update())
-            if conversation is None or conversation.active_message_id != int(turn.assistant_message_id):
-                if status == 'cancelled':
-                    return
-                raise ConversationError('conversation_busy', '回答已过期，请刷新对话')
             message = session.get(Message, int(turn.assistant_message_id))
+            if conversation is None or conversation.active_message_id != int(turn.assistant_message_id):
+                # A stopped older stream can finish after a new turn has started.
+                # Preserve its partial text without releasing the new turn's marker.
+                if message is not None and message.status == 'cancelled':
+                    if content:
+                        message.content = content
+                        session.commit()
+                    return 'cancelled'
+                if status == 'cancelled':
+                    return message.status if message is not None else 'cancelled'
+                raise ConversationError('conversation_busy', '回答已过期，请刷新对话')
             if message is None:
                 raise ConversationError('conversation_not_found', '回答记录不存在')
+            if message.status == 'cancelled':
+                status = 'cancelled'
             message.content = content
             message.status = status
             conversation.active_message_id = None
             conversation.updated_at = utc_now()
             session.commit()
+            return status

@@ -196,6 +196,7 @@ Alembic 同时维护自己的 `alembic_version` 版本表。已存在 `users` �
 | POST /api/conversations | 创建会话，返回 conversation_id、title、updated_at |
 | GET /api/conversations | 当前用户会话，updated_at 倒序；offset 默认 0、limit 默认 30，最多 100 |
 | GET /api/conversations/{conversation_id}/messages | 消息按 ID 升序返回，默认最近 50 条、最多 100；before 为最早消息 ID，可分页读取更早记录 |
+| POST /api/chat/stop | 精确停止指定助手回答，校验用户与会话归属，详见下文 |
 
 除登录外，均需 `X-User-Id` 请求头。缺失、非法或不存在的用户返回 401；会话不存在或不属于用户返回 404；同一会话正在生成返回 409；数据库失败返回脱敏的 503。HTTP 错误使用 `{"code":"...","message":"..."}`，输入格式错误为 422。
 
@@ -237,13 +238,13 @@ event: message
 data: {"content": "！"}
 
 event: done
-data: {"finish_reason": "stop", "truncated": false}
+data: {"finish_reason": "stop", "truncated": false, "cancelled": false}
 
 ```
 
 - `meta`：已保存用户消息与助手占位记录，返回会话和消息 ID。
 - `message`：增量文字，客户端自行拼接；文字中的换行通过 JSON 转义，不破坏 SSE 帧。
-- `done`：回答全文已经提交数据库后发送一次；finish_reason 为上游结束原因，达到输出上限时 truncated 为 true。
+- `done`：回答内容和最终状态已经提交数据库后发送一次；正常结束时 finish_reason 为上游结束原因，达到输出上限时 truncated 为 true。主动停止时 cancelled 为 true、finish_reason 为 cancelled，保存部分内容而非完整回答。
 - `error`：安全错误码与提示，之后结束流，不再发送 `done`。
 
 错误示例：
@@ -259,6 +260,30 @@ data: {"code": "upstream_timeout", "message": "模型服务响应超时，请稍
 POST SSE 不能直接使用浏览器原生 `EventSource` 发送 JSON，应使用 `fetch` 流读取或支持 POST 的 SSE 客户端。反向代理需关闭缓冲并设置合适的读取超时，服务已返回 `Cache-Control: no-cache` 和 `X-Accel-Buffering: no`。
 
 断连时关闭 SSE 编码器、服务流和供应商流，释放上游连接；取消会继续传播，不转换为普通错误事件。但关闭本地连接不保证供应商已经停止生成或计费。
+
+### 停止生成
+
+`POST /api/chat/stop`，请求头同样需要 `X-User-Id`：
+
+```json
+{"conversation_id":"替换为会话UUID","assistant_message_id":"替换为meta事件中的助手消息ID"}
+```
+
+`assistant_message_id` 是正整数字符串，最大值为 18446744073709551615。通过消息 ID 定位本轮，防止迟到的停止请求误停后续回答。会话不属于当前用户、消息不属于该会话或消息不是助手回答时返回 404；输入不合法返回 422。
+
+响应为 `{"stopped":true}`，表示已将目标回答标记为 cancelled；重复停止同一条已取消回答仍返回 true。回答已经正常完成或失败时返回 `{"stopped":false}`，不修改已有内容和状态。
+
+停止标记使用现有消息状态保存到数据库，不需要新增迁移，不依赖进程内任务表。生成服务在等待模型片段时约每 250 毫秒检查一次状态（实际延迟还包括数据库操作耗时），检测停止后取消等待、关闭模型流、保存已生成内容，并发送：
+
+```text
+event: done
+data: {"finish_reason":"cancelled","truncated":false,"cancelled":true}
+
+```
+
+停止接口成功表示标记已保存；上述 SSE 结束事件表示部分文本已最终保存、模型流已关闭。前端在收到 `meta` 后启用“停止生成”，点击时调用接口并显示“正在停止…”，继续读取 SSE 直到终止确认。停止请求失败时保留当前流并允许重试。切换会话、退出和卸载仍通过断连关闭当前请求。
+
+停止与正常完成同时发生时，以数据库事务提交顺序确定最终状态；已标记取消的回答不会再被改回 completed。新一轮开始后，旧流的清理也不会清除新一轮的占用标记。
 
 消息状态为 generating、completed、failed 或 cancelled；停止和失败保留已生成的部分文本。完整生成总预算为 120 秒，回答存储限制为 60000 UTF-8 字节。生成前通过会话行锁提交 active_message_id，避免多个进程同时回复同一会话；进程异常退出遗留的占用在下一次请求时，超过 5 分钟才标记失败并释放。异常退出前未最终保存的增量不会恢复，不宣称支持断点续传。
 
@@ -277,10 +302,11 @@ POST SSE 不能直接使用浏览器原生 `EventSource` 发送 JSON，应使用
 
 payload 不包含 Authorization 或数据库配置，因此不会直接打印配置中的 API key 或数据库密码。完整消息日志按用户要求启用，消息内的个人信息或用户自行输入的秘密也会原样输出，仅用于本地调试；分享日志前务必检查并脱敏。不记录响应正文，日志不改变请求内容和 SSE 协议，不单独发起模型调用；默认输出到控制台，不自动写入文件。
 
-当前没有正式测试、lint 或静态类型检查配置。可在本目录运行基础检查：
+当前使用标准库 unittest 验证停止接口和取消行为，没有额外测试框架、lint 或静态类型检查配置。测试使用隔离的临时 SQLite 数据库和模型替身，不连接实际 MySQL、不调用真实模型；不验证 MySQL 行锁行为。可在本目录运行：
 
 ```bash
-./.venv/Scripts/python.exe -m compileall -q main.py backend migrations
+./.venv/Scripts/python.exe -m unittest discover -s tests -v
+./.venv/Scripts/python.exe -m compileall -q main.py backend migrations tests
 ./.venv/Scripts/python.exe -m pip check
 ./.venv/Scripts/python.exe .agents/skills/code-change-verification/scripts/validate_skills.py
 ```

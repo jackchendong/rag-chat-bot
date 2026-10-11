@@ -90,6 +90,14 @@ export async function listMessages(userId: string, conversationId: string, signa
   return data.map(parseMessage)
 }
 
+export async function stopChat(userId: string, conversationId: string, assistantMessageId: string, signal: AbortSignal): Promise<boolean> {
+  const data = record(await request('/chat/stop', userId, signal, {
+    conversation_id: conversationId, assistant_message_id: assistantMessageId,
+  }))
+  if (typeof data.stopped !== 'boolean') throw new Error('停止响应格式无效')
+  return data.stopped
+}
+
 export async function streamChat(
   userId: string, conversationId: string, message: string, signal: AbortSignal,
   onEvent: (event: ChatEvent) => void,
@@ -125,7 +133,8 @@ export async function streamChat(
           else if (event === 'message') onEvent({ event, content: text(data.content) })
           else if (event === 'done') {
             if (typeof data.truncated !== 'boolean') throw new Error('结束事件格式无效')
-            onEvent({ event, truncated: data.truncated })
+            if (data.cancelled !== undefined && typeof data.cancelled !== 'boolean') throw new Error('结束事件格式无效')
+            onEvent({ event, truncated: data.truncated, cancelled: data.cancelled === true })
             return
           }
         }

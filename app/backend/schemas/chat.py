@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
 
 
 class ChatRequest(BaseModel):
@@ -10,3 +10,22 @@ class ChatRequest(BaseModel):
     message: Annotated[
         str, StringConstraints(strict=True, strip_whitespace=True, min_length=1, max_length=10000)
     ]
+
+
+class ChatStopRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    conversation_id: UUID
+    assistant_message_id: Annotated[
+        str, StringConstraints(strict=True, pattern=r'^[1-9][0-9]{0,19}$')
+    ]
+
+    @field_validator('assistant_message_id')
+    @classmethod
+    def validate_message_id(cls, value: str) -> str:
+        if int(value) > 18446744073709551615:
+            raise ValueError('回答 ID 超出范围')
+        return value
+
+
+class ChatStopResponse(BaseModel):
+    stopped: bool

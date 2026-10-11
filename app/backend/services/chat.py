@@ -22,9 +22,15 @@ class ChatService:
         with anyio.CancelScope(shield=True):
             return await anyio.to_thread.run_sync(self.store.prepare_turn, user_id, conversation_id, message)
 
-    async def save(self, turn: PreparedTurn, content: str, status: MessageStatus) -> None:
+    async def save(self, turn: PreparedTurn, content: str, status: MessageStatus) -> MessageStatus:
         with anyio.CancelScope(shield=True):
-            await anyio.to_thread.run_sync(self.store.finish_turn, turn, content, status)
+            return await anyio.to_thread.run_sync(self.store.finish_turn, turn, content, status)
+
+    async def stop(self, user_id: int, conversation_id: str, assistant_message_id: int) -> bool:
+        with anyio.CancelScope(shield=True):
+            return await anyio.to_thread.run_sync(
+                self.store.stop_turn, user_id, conversation_id, assistant_message_id,
+            )
 
     async def cancel(self, turn: PreparedTurn) -> None:
         try:
@@ -42,34 +48,61 @@ class ChatService:
                 'assistant_message_id': turn.assistant_message_id,
             })
             deadline = time.monotonic() + 120
+            next_stop_check = 0.0
+            stopped = False
+            finish_reason: str | None = None
             async with aclosing(self.gateway.stream_answer(turn.messages)) as chunks:
                 while True:
+                    pending_chunk = asyncio.create_task(anext(chunks))
                     try:
-                        remaining = deadline - time.monotonic()
-                        if remaining <= 0:
-                            raise TimeoutError
-                        chunk = await asyncio.wait_for(anext(chunks), timeout=remaining)
+                        while True:
+                            if time.monotonic() >= next_stop_check:
+                                stopped = await anyio.to_thread.run_sync(self.store.is_turn_cancelled, turn)
+                                next_stop_check = time.monotonic() + 0.25
+                                if stopped:
+                                    break
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0:
+                                raise TimeoutError
+                            done, _ = await asyncio.wait(
+                                {pending_chunk}, timeout=min(remaining, max(0, next_stop_check - time.monotonic())),
+                            )
+                            if done:
+                                break
+                        if stopped:
+                            break
+                        chunk = pending_chunk.result()
                     except StopAsyncIteration:
                         raise ModelServiceError('incomplete_stream', '模型回答意外中断，请重试') from None
+                    finally:
+                        if not pending_chunk.done():
+                            pending_chunk.cancel()
+                        with anyio.CancelScope(shield=True):
+                            await asyncio.gather(pending_chunk, return_exceptions=True)
                     if chunk.content:
                         if len((content + chunk.content).encode('utf-8')) > 60000:
                             raise ModelServiceError('output_limit', '回答超过长度限制，请缩小问题范围')
                         content += chunk.content
                         yield ChatEvent('message', {'content': chunk.content})
                     if chunk.done:
-                        await self.save(turn, content, 'completed')
-                        persisted = True
-                        yield ChatEvent('done', {
-                            'finish_reason': chunk.finish_reason,
-                            'truncated': chunk.finish_reason == 'length',
-                        })
-                        return
+                        finish_reason = chunk.finish_reason
+                        break
+            status = await self.save(turn, content, 'cancelled' if stopped else 'completed')
+            persisted = True
+            yield ChatEvent('done', {
+                'finish_reason': 'cancelled' if status == 'cancelled' else finish_reason,
+                'truncated': status != 'cancelled' and finish_reason == 'length',
+                'cancelled': status == 'cancelled',
+            })
         except (ModelServiceError, ConversationError, asyncio.TimeoutError, TimeoutError) as error:
             if isinstance(error, (asyncio.TimeoutError, TimeoutError)):
                 error = ModelServiceError('upstream_timeout', '回答生成超时，请稍后重试')
             try:
-                await self.save(turn, content, 'failed')
+                status = await self.save(turn, content, 'failed')
                 persisted = True
+                if status == 'cancelled':
+                    yield ChatEvent('done', {'finish_reason': 'cancelled', 'truncated': False, 'cancelled': True})
+                    return
             except ConversationError as storage_error:
                 error = storage_error
             yield ChatEvent('error', {'code': error.code, 'message': error.message})

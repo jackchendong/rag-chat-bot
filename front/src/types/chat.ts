@@ -20,4 +20,4 @@ export interface Message {
 export type ChatEvent =
   | { event: 'meta'; user_message_id: string; assistant_message_id: string }
   | { event: 'message'; content: string }
-  | { event: 'done'; truncated: boolean }
+  | { event: 'done'; truncated: boolean; cancelled: boolean }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { ApiError, createConversation, listConversations, listMessages, streamChat } from '@/services/api'
+import { ApiError, createConversation, listConversations, listMessages, stopChat, streamChat } from '@/services/api'
 import type { Conversation, Message, User } from '@/types/chat'
 
 const props = defineProps<{ user: User }>()
@@ -12,6 +12,8 @@ const draft = ref('')
 const error = ref('')
 const notice = ref('')
 const busy = ref(false)
+const stopping = ref(false)
+const activeAssistantId = ref<string | null>(null)
 const loading = ref(false)
 const loadingHistory = ref(false)
 const moreConversations = ref(false)
@@ -22,6 +24,7 @@ const follow = ref(true)
 const title = computed(() => conversations.value.find(item => item.conversation_id === selectedId.value)?.title || '新对话')
 let version = 0
 let streamController: AbortController | null = null
+let stopController: AbortController | null = null
 let viewController: AbortController | null = null
 let listController: AbortController | null = null
 
@@ -63,8 +66,11 @@ async function refreshConversations(append = false) {
 function resetView() {
   version += 1
   streamController?.abort()
+  stopController?.abort()
   viewController?.abort()
   busy.value = false
+  stopping.value = false
+  activeAssistantId.value = null
   loading.value = false
   error.value = ''
   notice.value = ''
@@ -131,6 +137,8 @@ async function send() {
   const controller = new AbortController()
   streamController = controller
   busy.value = true
+  stopping.value = false
+  activeAssistantId.value = null
   error.value = ''
   notice.value = ''
   follow.value = true
@@ -157,12 +165,14 @@ async function send() {
         if (assistantRow) assistantRow.id = event.assistant_message_id
         userMessage.id = event.user_message_id
         assistantMessage.id = event.assistant_message_id
+        activeAssistantId.value = event.assistant_message_id
         void refreshConversations()
       } else if (event.event === 'message' && assistantRow) {
         assistantRow.content += event.content
         void scrollToBottom()
       } else if (event.event === 'done' && assistantRow) {
-        assistantRow.status = 'completed'
+        assistantRow.status = event.cancelled ? 'cancelled' : 'completed'
+        if (event.cancelled) notice.value = '已停止生成，已保留生成内容。'
         if (event.truncated) notice.value = '回答达到输出长度上限，可以继续追问。'
       }
     })
@@ -181,7 +191,40 @@ async function send() {
   } finally {
     if (currentVersion === version) {
       busy.value = false
+      stopping.value = false
+      activeAssistantId.value = null
       void refreshConversations()
+    }
+  }
+}
+
+async function stop() {
+  const conversationId = selectedId.value
+  const assistantId = activeAssistantId.value
+  if (!busy.value || stopping.value || !conversationId || !assistantId) return
+  const currentVersion = version
+  const activeStream = streamController
+  const controller = new AbortController()
+  stopController = controller
+  stopping.value = true
+  error.value = ''
+  let accepted = false
+  const timeout = window.setTimeout(() => controller.abort(), 15000)
+  try {
+    const stopped = await stopChat(props.user.user_id, conversationId, assistantId, controller.signal)
+    if (currentVersion !== version || activeStream !== streamController) return
+    accepted = stopped
+    if (!stopped) notice.value = '回答已结束。'
+    // Keep the SSE connection until the server has saved partial text and sent done.
+  } catch (failure) {
+    if (currentVersion !== version || activeStream !== streamController) return
+    if (controller.signal.aborted) error.value = '停止请求超时，请重试。'
+    else report(failure)
+  } finally {
+    window.clearTimeout(timeout)
+    if (stopController === controller) {
+      stopController = null
+      if (!accepted || !busy.value) stopping.value = false
     }
   }
 }
@@ -202,6 +245,7 @@ onMounted(() => void refreshConversations())
 onBeforeUnmount(() => {
   version += 1
   streamController?.abort()
+  stopController?.abort()
   viewController?.abort()
   listController?.abort()
 })
@@ -249,7 +293,7 @@ onBeforeUnmount(() => {
             <label for="message" class="sr-only">消息</label>
             <textarea id="message" v-model="draft" maxlength="10000" rows="2" :disabled="busy || loading" placeholder="发送消息，Enter 发送，Shift + Enter 换行"
               class="w-full resize-none bg-transparent px-2 py-2 outline-none disabled:opacity-60" @keydown.enter="handleEnter" />
-            <div class="flex items-center justify-between"><span class="pl-2 text-xs text-muted-foreground">{{ draft.length }}/10000</span><button v-if="busy" type="button" class="rounded-full border px-4 py-2 text-sm" @click="streamController?.abort()">停止生成</button><button v-else :disabled="!draft.trim() || loading" class="rounded-full bg-primary px-5 py-2 text-sm text-primary-foreground disabled:opacity-40">发送 ↑</button></div>
+            <div class="flex items-center justify-between"><span class="pl-2 text-xs text-muted-foreground">{{ draft.length }}/10000</span><button v-if="busy" type="button" :disabled="stopping || !activeAssistantId" class="rounded-full border px-4 py-2 text-sm disabled:opacity-40" @click="stop">{{ stopping ? '正在停止…' : '停止生成' }}</button><button v-else :disabled="!draft.trim() || loading" class="rounded-full bg-primary px-5 py-2 text-sm text-primary-foreground disabled:opacity-40">发送 ↑</button></div>
           </form>
           <p class="mt-3 text-center text-xs text-muted-foreground">AI 回答可能不准确。Demo 无密码登录，请勿输入敏感信息。</p>
         </div>

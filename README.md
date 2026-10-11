@@ -175,7 +175,7 @@ event: message
 data: {"content": "！"}
 
 event: done
-data: {"finish_reason": "stop", "truncated": false}
+data: {"finish_reason": "stop", "truncated": false, "cancelled": false}
 
 ```
 
@@ -189,7 +189,9 @@ data: {"code": "upstream_timeout", "message": "模型服务响应超时，请稍
 
 输入不合法返回 HTTP 422；上游问题在已经建立的 SSE 响应中以 `error` 事件报告，因此 HTTP 200 本身不代表回答成功。客户端断开时释放流连接，但不保证供应商侧已经停止生成或计费。接口不自动重试，不返回供应商原始错误内容或密钥。
 
-这是 POST SSE，浏览器原生 `EventSource` 不能直接传入该 JSON 请求，应使用 `fetch` 流读取或支持 POST 的 SSE 客户端。反向代理应禁用响应缓冲并设置足够的流式读取超时；当前前端未修改。
+前端“停止生成”调用 `POST /api/chat/stop`，携带 `X-User-Id` 和 JSON `{"conversation_id":"会话UUID","assistant_message_id":"meta事件返回的助手消息ID"}`。后端校验归属并持久化停止标记，关闭模型流后保留部分回答，发送 `done`（`cancelled: true`、`finish_reason: "cancelled"`）。前端等待该结束事件再显示“已停止”。停止接口可重复调用，不会误停后续回答；使用现有消息状态，无需新增数据库迁移。
+
+这是 POST SSE，浏览器原生 `EventSource` 不能直接传入该 JSON 请求，应使用 `fetch` 流读取或支持 POST 的 SSE 客户端。反向代理应禁用响应缓冲并设置足够的流式读取超时。
 
 实现依据 [DeepSeek Chat Completions 文档](https://api-docs.deepseek.com/api/create-chat-completion/) 的流式协议，任务存储、调度与默认时区的配置将在对应功能实现时补充。
 

@@ -73,6 +73,40 @@ Linux/macOS 使用 `.venv/bin/python` 替换上述 Windows 解释器路径。
 
 `main:app` 是对外启动入口，内部 Python 包名为 `backend`，而不是 `app`。直接导入内部包时在本目录执行；不要混用多个包名导入相同文件。
 
+## Docker 部署
+
+Dockerfile 和构建忽略文件分别位于 `app/Dockerfile`、`app/Dockerfile.dockerignore`。镜像仅安装 Python 后端依赖，pip 使用清华 PyPI 镜像源 `https://pypi.tuna.tsinghua.edu.cn/simple`；直接复制本地已打包的 `app/static/`，由 FastAPI 提供 API 和静态页面。Docker 构建不安装 Node.js，也不编译前端。镜像内使用 Python 3.10，默认以 root 运行单个 Uvicorn worker，不使用开发热重载。
+
+先在本地 front 目录执行 `pnpm build`，生成 app/static/index.html 和资源文件，再将 app 目录连同 static 上传服务器。static 构建产物被 Git 忽略，仅拉取代码不会得到页面文件。镜像构建会检查 static/index.html，未打包或未上传时直接失败。
+
+**以下命令在服务器的 app 目录执行**，构建上下文只需该目录：
+
+```bash
+docker build -t rag-chat-bot:latest .
+```
+
+从仓库根目录执行时使用 `docker build -f app/Dockerfile -t rag-chat-bot:latest app`。Dockerfile 专属忽略文件允许后端源码、Skills、static 产物和本地 `.env` 进入构建，迁移文件、虚拟环境、node_modules、缓存、测试和运行数据被排除。该文件命名与优先级遵循 [Docker 构建上下文说明](https://docs.docker.com/build/concepts/context/#dockerignore-files)。
+
+构建前在 app 目录准备 `.env`（可参考 `.env.example`，不要提交真实凭据），构建时直接复制为镜像内的 `/app/.env`，配置变更后需重新构建，或通过运行时环境变量覆盖。该文件会包含在镜像中。容器内的 127.0.0.1 指向容器自身，MYSQL_HOST 要填写容器能够访问的 MySQL 8.0+ 地址；MySQL 在宿主机时可填写 host.docker.internal，下面的命令通过 host-gateway 为其添加映射。MySQL 在同一 Docker 网络中时，使用其容器服务名，并为下述运行命令添加 `--network 网络名`。
+
+容器安装系统 tzdata，并将 TZ、/etc/localtime 和 /etc/timezone 统一设为中国时区 Asia/Shanghai。数据库仍按应用约定存储 UTC，定时计划继续使用各任务保存的 IANA 时区。
+
+这是 Demo 部署，数据库结构由你在本地提前准备。镜像构建和容器启动均不执行 migration，服务器直接启动服务：
+
+```bash
+docker run -d --name rag-chat-bot --restart unless-stopped \
+  --stop-timeout 60 \
+  --add-host host.docker.internal:host-gateway \
+  -p 127.0.0.1:8000:8000 \
+  rag-chat-bot:latest
+
+docker logs --tail 100 -f rag-chat-bot
+```
+
+以上多行命令使用 Linux/Bash 的续行方式。PowerShell 中可将每条命令合并为一行。默认端口仅映射服务器本机，访问 `http://127.0.0.1:8000/` 即为聊天页面，`/docs` 为接口文档；对外访问可接现有反向代理。Nginx 代理 SSE 时配置 `proxy_buffering off` 和足够的 `proxy_read_timeout`（例如 300s）。如果确需直接开放端口，将映射改为 `-p 8000:8000`；项目仍为无密码 Demo 身份识别。
+
+任务、执行记录和会话均保存在外部 MySQL 中，重建容器不会清除它们；数据库需要持续可用。运行时 Skills 已包含在镜像中，Shell 的默认工作目录 `/app/workspace` 可由容器用户写入。更新代码后重新构建镜像，并停止、移除旧容器后用上述参数重新创建；不要用 `--reload` 或额外添加多个 worker。60 秒停止宽限用于等待后台任务取消和结果保存。默认读取镜像内 `.env`，也可在 docker run 中增加 `--env-file .env`，以环境变量覆盖镜像内同名配置。
+
 ## 目录与职责
 
 ```text

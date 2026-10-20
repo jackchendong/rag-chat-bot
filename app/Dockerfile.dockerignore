@@ -1,0 +1,21 @@
+# Paths are relative to app/, which is the build context.
+**
+!main.py
+!requirements.txt
+!backend/
+!backend/**
+!skills/
+!skills/**
+!static/
+!static/**
+**/__pycache__/
+**/.venv/
+**/venv/
+**/node_modules/
+**/*.py[cod]
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+# Explicitly include app/.env as requested; other .env.* files stay excluded.
+!.env

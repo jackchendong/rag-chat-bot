@@ -123,7 +123,7 @@ pnpm preview
 
 后端目录、分层职责、配置及扩展规范详见 [app/README.md](app/README.md)。启动入口和现有 SSE 协议保持不变。
 
-后端通过 /static/ 提供前端页面。在 front/ 执行 pnpm build:backend，将页面和资源构建到 app/static，之后访问 http://127.0.0.1:8000/，会重定向到 /static/index.html。非 /api、/docs 开头的页面路径均重定向到该入口；/static/ 下的文件继续直接提供，缺失资源返回 404。构建资源路径已配置为 /static/，产物不提交；不要在公开目录放入密钥或私有数据。
+后端通过 /static/ 提供前端页面。在 front/ 执行 pnpm build:backend，将页面和资源构建到 app/static，之后访问 http://127.0.0.1:8000/，会重定向到 /static/index.html。非 /api、/docs 开头的页面路径均重定向到该入口；/static/ 下的文件继续直接提供，缺失资源返回 404。构建资源路径已配置为 /static/，app/static 产物可随代码纳入 Git，用于服务器直接构建镜像；不要在公开目录放入密钥或私有数据。
 
 使用 Python 3.10 或兼容版本，在 Git Bash 中从仓库根目录执行：
 

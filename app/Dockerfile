@@ -29,7 +29,12 @@ COPY .env ./.env
 COPY backend/ ./backend/
 COPY skills/ ./skills/
 COPY static/ ./static/
-# Fail early if only static/.gitkeep was uploaded without the frontend build.
-RUN test -s static/index.html && mkdir -p /app/workspace
+# Validate the uploaded frontend with an actionable error instead of a silent exit.
+RUN if [ ! -s /app/static/index.html ]; then \
+        echo "ERROR: /app/static/index.html is missing or empty. Build the frontend locally and upload its output directly into app/static/ before docker build." >&2; \
+        ls -la /app/static >&2; \
+        exit 1; \
+    fi \
+    && mkdir -p /app/workspace
 EXPOSE 8000
 CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--timeout-graceful-shutdown", "30"]

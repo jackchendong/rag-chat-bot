@@ -77,7 +77,9 @@ Linux/macOS 使用 `.venv/bin/python` 替换上述 Windows 解释器路径。
 
 Dockerfile 和构建忽略文件分别位于 `app/Dockerfile`、`app/Dockerfile.dockerignore`。镜像仅安装 Python 后端依赖，pip 使用清华 PyPI 镜像源 `https://pypi.tuna.tsinghua.edu.cn/simple`；直接复制本地已打包的 `app/static/`，由 FastAPI 提供 API 和静态页面。Docker 构建不安装 Node.js，也不编译前端。镜像内使用 Python 3.10，默认以 root 运行单个 Uvicorn worker，不使用开发热重载。
 
-先在本地 front 目录执行 `pnpm build`，生成 app/static/index.html 和资源文件，再将 app 目录连同 static 上传服务器。static 构建产物被 Git 忽略，仅拉取代码不会得到页面文件。镜像构建会检查 static/index.html，未打包或未上传时直接失败。
+先在本地 front 目录执行 `pnpm build`，生成 app/static/index.html 和资源文件。app/static 构建产物允许纳入 Git，部署前将本次构建产物与代码一起提交并推送，服务器拉取后即可用于镜像构建；也可以将 app 目录连同 static 直接上传服务器。镜像构建会检查 static/index.html，未打包或未上传时直接失败。
+
+若构建提示 static/index.html 缺失或为空，在服务器 app 目录执行 `ls -l static/index.html` 和 `ls -l static/assets/` 检查上传结果。正确层级为 `app/static/index.html` 与 `app/static/assets/`，不能多套一层 dist 或 static 目录。确认文件完整后重新构建；Dockerfile 会打印缺失原因和容器内 static 目录清单。
 
 **以下命令在服务器的 app 目录执行**，构建上下文只需该目录：
 
@@ -175,7 +177,7 @@ app/
 - 未构建页面时 `/static/` 返回 404；缺失资源同样返回 404，不自动回退到首页。当前页面使用组件状态切换而非 history 路由。
 - 非 `/api`、`/docs` 开头且不在 `/static/` 下的路径（包括 `/`）返回 HTTP 307，重定向到 `/static/index.html`。`/static/` 下继续直接提供页面和资源，避免重定向循环；缺失资源保持 404。
 - `/api`、`/docs` 开头的请求保留路由行为，未知路径返回 404。接口文档保留在 `/docs`，使用 `/api/openapi.json` 加载接口定义；旧 `/openapi.json` 路径会重定向到前端入口。
-- 构建产物被 Git 忽略，仅保留 `.gitkeep`。本目录中的文件可被公开访问，不能放入 `.env`、数据库配置、密钥或用户私有数据。
+- 构建产物允许纳入 Git，部署时可随代码一起拉取。本目录中的文件可被公开访问，不能放入 `.env`、数据库配置、密钥或用户私有数据。
 
 ## MySQL 与手动迁移
 

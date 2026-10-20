@@ -89,7 +89,7 @@ docker build -t rag-chat-bot:latest .
 
 构建前在 app 目录准备 `.env`（可参考 `.env.example`，不要提交真实凭据），构建时直接复制为镜像内的 `/app/.env`，配置变更后需重新构建，或通过运行时环境变量覆盖。该文件会包含在镜像中。容器内的 127.0.0.1 指向容器自身，MYSQL_HOST 要填写容器能够访问的 MySQL 8.0+ 地址；MySQL 在宿主机时可填写 host.docker.internal，下面的命令通过 host-gateway 为其添加映射。MySQL 在同一 Docker 网络中时，使用其容器服务名，并为下述运行命令添加 `--network 网络名`。
 
-容器安装系统 tzdata，并将 TZ、/etc/localtime 和 /etc/timezone 统一设为中国时区 Asia/Shanghai。数据库仍按应用约定存储 UTC，定时计划继续使用各任务保存的 IANA 时区。
+容器通过清华 Debian 镜像源安装系统 tzdata，并将 TZ、/etc/localtime 和 /etc/timezone 统一设为中国时区 Asia/Shanghai；apt 换源修改 Bookworm 的 `/etc/apt/sources.list.d/debian.sources`，参见 [清华 Debian 镜像说明](https://mirrors.tuna.tsinghua.edu.cn/help/debian/)。数据库仍按应用约定存储 UTC，定时计划继续使用各任务保存的 IANA 时区。
 
 这是 Demo 部署，数据库结构由你在本地提前准备。镜像构建和容器启动均不执行 migration，服务器直接启动服务：
 

@@ -14,7 +14,11 @@ ENV PATH="/opt/venv/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
     TZ=Asia/Shanghai
 WORKDIR /app
-RUN apt-get update \
+RUN sed -i \
+    -e 's|http://deb.debian.org|https://mirrors.tuna.tsinghua.edu.cn|g' \
+    -e 's|https://deb.debian.org|https://mirrors.tuna.tsinghua.edu.cn|g' \
+    /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tzdata \
     && ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
     && echo "Asia/Shanghai" > /etc/timezone \

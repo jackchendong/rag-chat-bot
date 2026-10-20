@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from ..domain.chat import ModelMessage
 from ..domain.conversations import ConversationInfo, ConversationStore, MessageInfo, MessageStatus, PreparedTurn, UserInfo
 from ..domain.errors import ConversationError
-from ..models import Conversation, Message, User
+from ..models import Conversation, Message, User, ScheduledRun, ScheduledTask
 
 
 def utc_now() -> datetime:
@@ -87,8 +87,16 @@ class ConversationRepository(ConversationStore):
             return [MessageInfo(str(row.id), row.role, row.content, row.status,
                 row.created_at.replace(tzinfo=timezone.utc)) for row in reversed(rows)]
 
-    def prepare_turn(self, user_id: int, conversation_id: str, message: str) -> PreparedTurn:
+    def prepare_turn(self, user_id: int, conversation_id: str, message: str,
+                     scheduled_run_id: str | None = None) -> PreparedTurn:
         with self.session() as session:
+            scheduled_run = None
+            if scheduled_run_id:
+                scheduled_run = session.scalar(select(ScheduledRun).where(ScheduledRun.id == scheduled_run_id).with_for_update())
+                task = session.get(ScheduledTask, scheduled_run.task_id) if scheduled_run else None
+                if (not scheduled_run or scheduled_run.status != 'running' or scheduled_run.assistant_message_id
+                        or not task or task.user_id != user_id or task.conversation_id != conversation_id):
+                    raise ConversationError('task_busy', '执行记录已失效或已关联消息')
             conversation = self.owned_conversation(session, user_id, conversation_id, lock=True)
             if conversation.active_message_id is not None:
                 active = session.get(Message, conversation.active_message_id)
@@ -117,6 +125,9 @@ class ConversationRepository(ConversationStore):
             assistant_message = Message(conversation_id=conversation_id, role='assistant', content='', status='generating')
             session.add_all([user_message, assistant_message])
             session.flush()
+            if scheduled_run:
+                scheduled_run.user_message_id = user_message.id
+                scheduled_run.assistant_message_id = assistant_message.id
             conversation.active_message_id = assistant_message.id
             conversation.updated_at = utc_now()
             if first_message:

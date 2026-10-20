@@ -1,8 +1,10 @@
+import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, RedirectResponse, Response
@@ -10,6 +12,9 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from .api.routes.chat import router
 from .api.routes.conversations import router as conversation_router
 from .api.routes.agent import router as agent_router
+from .api.routes.schedules import router as schedule_router
+from .repositories.schedules import ScheduleRepository
+from .services.schedules import ScheduleRunner
 from .core.config import AgentSettings, DatabaseSettings, Settings
 from .core.logging import configure_logging
 from .db.session import create_database_engine, create_session_factory
@@ -24,6 +29,7 @@ from .tools.web import TavilyTool
 from .tools.public_web import PublicWebTool
 from .tools.weather import OpenMeteoWeatherTool
 from .tools.shell import ShellTool
+from .tools.schedules import CreateScheduledTaskTool
 from .domain.agent import Tool
 
 
@@ -42,7 +48,8 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             timeout=httpx.Timeout(settings.timeout, connect=10),
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
         ) as client:
-            tools: list[Tool] = [LoadSkillTool(skills)]
+            application.state.schedule_store = ScheduleRepository(application.state.session_factory)
+            tools: list[Tool] = [LoadSkillTool(skills), CreateScheduledTaskTool(application.state.schedule_store)]
             if agent.weather_enabled:
                 tools.append(OpenMeteoWeatherTool(client))
             if agent.web_enabled:
@@ -59,7 +66,23 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             application.state.chat_service = ChatService(DeepSeekClient(client, settings),
                 application.state.conversation_store, AgentTaskRepository(application.state.session_factory),
                 ToolRegistry(tools), skills, agent.policy(), settings.model)
-            yield
+            runner = ScheduleRunner(application.state.schedule_store, application.state.chat_service)
+            scheduler = AsyncIOScheduler(timezone='UTC')
+            # Only the periodic wakeup is in memory. All business schedules/claims live in MySQL.
+            scheduler.add_job(runner.tick, 'interval', seconds=2, id='persistent-schedule-poll',
+                coalesce=True, max_instances=1, misfire_grace_time=30)
+            scheduler.start()
+            try:
+                yield
+            finally:
+                scheduler.pause()
+                pending = tuple(runner.active_ticks)
+                scheduler.shutdown(wait=False)
+                # AsyncIOScheduler.shutdown cancels its futures; wait for DB/model cleanup.
+                await asyncio.sleep(0)
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
+                await runner.close()
     finally:
         engine.dispose()
 
@@ -76,6 +99,7 @@ def create_app() -> FastAPI:
     application.include_router(router, prefix='/api')
     application.include_router(conversation_router, prefix='/api')
     application.include_router(agent_router, prefix='/api')
+    application.include_router(schedule_router, prefix='/api')
     application.add_exception_handler(ConversationError, handle_conversation_error)
     static_directory = Path(__file__).resolve().parents[1] / 'static'
     application.mount('/static', StaticFiles(directory=static_directory, html=True), name='static')
@@ -103,5 +127,7 @@ async def handle_conversation_error(request: Request, error: Exception) -> JSONR
         'storage_unavailable': 503,
         'task_not_found': 404,
         'invalid_skill': 400,
+        'invalid_schedule': 400,
+        'task_busy': 409,
     }.get(error.code, 500)
     return JSONResponse(status_code=status, content={'code': error.code, 'message': error.message})

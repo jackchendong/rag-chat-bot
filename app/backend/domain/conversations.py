@@ -60,7 +60,8 @@ class ConversationStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def prepare_turn(self, user_id: int, conversation_id: str, message: str) -> PreparedTurn:
+    def prepare_turn(self, user_id: int, conversation_id: str, message: str,
+                     scheduled_run_id: str | None = None) -> PreparedTurn:
         raise NotImplementedError
 
     @abstractmethod

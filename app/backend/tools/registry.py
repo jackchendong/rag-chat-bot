@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from ..domain.agent import Tool, ToolError, ToolExecutor
+from ..domain.agent import Tool, ToolContext, ToolError, ToolExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +17,10 @@ class ToolRegistry(ToolExecutor):
 
     def definitions(self) -> list[dict[str, Any]]:
         return [tool.definition for tool in self.tools.values()]
+
+    def bind(self, context: ToolContext) -> 'ToolRegistry':
+        scoped = [tool.bind(context) for tool in self.tools.values()]
+        return ToolRegistry([tool for tool in scoped if tool is not None])
 
     async def execute(self, name: str, arguments: str) -> dict[str, Any]:
         tool = self.tools.get(name)

@@ -1,4 +1,5 @@
 import type { ChatEvent, Conversation, Message, User } from '@/types/chat'
+import type { ScheduledTask, ScheduledRun, ScheduleInput } from '@/types/schedule'
 
 export class ApiError extends Error {
   readonly status: number
@@ -38,6 +39,54 @@ function parseMessage(value: unknown): Message {
     throw new Error('消息状态无效')
   }
   return { id: text(data.id), role: data.role, content: text(data.content), status: data.status, created_at: text(data.created_at) }
+}
+
+function nullableText(value: unknown): string | null {
+  return value === null ? null : text(value)
+}
+
+function parseSchedule(value: unknown): ScheduledTask {
+  const data = record(value)
+  if (data.kind !== 'once' && data.kind !== 'cron') throw new Error('任务计划类型无效')
+  return { id: text(data.id), conversation_id: text(data.conversation_id), name: text(data.name),
+    prompt: text(data.prompt), kind: data.kind, timezone: text(data.timezone), cron: nullableText(data.cron),
+    run_at: nullableText(data.run_at), next_run_at: nullableText(data.next_run_at),
+    status: text(data.status), created_at: text(data.created_at) }
+}
+
+function parseRun(value: unknown): ScheduledRun {
+  const data = record(value)
+  if (typeof data.result_truncated !== 'boolean') throw new Error('执行结果格式无效')
+  return { id: text(data.id), task_id: text(data.task_id), source: text(data.source), status: text(data.status),
+    prompt: text(data.prompt), scheduled_at: text(data.scheduled_at), started_at: nullableText(data.started_at),
+    finished_at: nullableText(data.finished_at), assistant_message_id: nullableText(data.assistant_message_id), error: nullableText(data.error),
+    message_status: nullableText(data.message_status), result_preview: nullableText(data.result_preview), result_truncated: data.result_truncated }
+}
+
+export async function listSchedules(userId: string, conversationId: string | undefined, offset: number, signal: AbortSignal): Promise<ScheduledTask[]> {
+  const query = new URLSearchParams({ offset: String(offset), limit: '30' })
+  if (conversationId) query.set('conversation_id', conversationId)
+  const data = await request(`/scheduled-tasks?${query}`, userId, signal)
+  if (!Array.isArray(data)) throw new Error('任务列表格式无效')
+  return data.map(parseSchedule)
+}
+
+export async function saveSchedule(userId: string, input: ScheduleInput, signal: AbortSignal, taskId: string): Promise<ScheduledTask> {
+  return parseSchedule(await request(`/scheduled-tasks/${taskId}/edit`, userId, signal, input))
+}
+
+export async function setScheduleState(userId: string, taskId: string, status: 'active' | 'paused', signal: AbortSignal): Promise<ScheduledTask> {
+  return parseSchedule(await request(`/scheduled-tasks/${taskId}/state`, userId, signal, { status }))
+}
+
+export async function runSchedule(userId: string, taskId: string, requestId: string, signal: AbortSignal): Promise<ScheduledRun> {
+  return parseRun(await request(`/scheduled-tasks/${taskId}/run`, userId, signal, { request_id: requestId }))
+}
+
+export async function listScheduleRuns(userId: string, taskId: string, offset: number, signal: AbortSignal): Promise<ScheduledRun[]> {
+  const data = await request(`/scheduled-tasks/${taskId}/runs?offset=${offset}&limit=20`, userId, signal)
+  if (!Array.isArray(data)) throw new Error('执行记录格式无效')
+  return data.map(parseRun)
 }
 
 async function ensureSuccess(response: Response): Promise<void> {

@@ -2,20 +2,20 @@
 
 一个采用前后端分离架构的大模型对话演示项目，分为前端和后端两个模块，目标是支持普通对话，以及通过对话创建并在后台运行定时任务。
 
-> 已实现账号登录、退出、会话历史、多轮 SSE、function calling、Skills、联网、受限 Shell 与 Agent loop 执行审计。定时调度与 RAG 尚未实现。
+> 已实现账号登录、退出、会话历史、多轮 SSE、function calling、Skills、联网、受限 Shell、Agent 执行审计，以及 AI 对话创建的 APScheduler + MySQL 持久化定时任务。RAG 尚未实现。
 
-后端使用 MySQL 存储 users、conversations、messages、agent_tasks 和 agent_task_steps，新增 Alembic 迁移由你手动执行；步骤见 app/README.md。服务启动不会自动建表或迁移。账号登录无密码，用户 ID 请求头只是 Demo 身份识别，不能防止冒用，不适合公开部署或存储敏感信息。
+后端使用 MySQL 存储用户、会话、消息、Agent 审计及 scheduled_tasks / scheduled_runs，新增 Alembic 迁移由你手动执行；步骤见 app/README.md。服务启动不会自动建表或迁移。账号登录无密码，用户 ID 请求头只是 Demo 身份识别，不能防止冒用，不适合公开部署或存储敏感信息。
 
 ## 功能目标
 
 - **普通对话**：用户发送消息，由大模型生成回复，支持日常问答等简单交互。
-- **对话创建任务**：用户通过自然语言表达任务内容和执行时间，系统识别意图并确认任务信息。
+- **对话创建任务**：AI 从自然语言提取提示词、时间和时区，信息完整时通过 function call 保存；有歧义时先追问。
 - **后台定时执行**：任务创建后，由后台在指定时间执行，不要求用户持续停留在聊天页面。
 - **执行结果反馈**：记录任务执行状态和结果，方便用户查看。
 
 ## 使用场景
 
-普通对话已可通过前端或后端接口调用；定时任务部分仍为预期交互示例，尚未实现。
+普通对话与定时任务已可通过前端使用。直接告诉 AI 要定时做什么、何时执行以及时区，AI 提取提示词并调用 create_scheduled_task 保存，无需填写创建表单。
 
 ### 普通对话
 
@@ -26,14 +26,16 @@
 
 ### 创建定时任务
 
+支持一次性、每天、每周和可表达为五段 Cron 的周期任务。AI 通过 scheduled-tasks Skill 理解创建流程，通过 create_scheduled_task function call 实际保存。左侧“定时任务”查看当前账号全部任务，支持编辑、停止/恢复、立即运行及跳转所属会话。会话内展开任务可查看执行记录，点击记录定位到对应回答；定位较早记录后可“返回最新消息”。
+
 ```text
 用户：每天上午 9 点生成一条学习建议。
-助手：请确认：每天上午 9 点生成学习建议。你希望使用哪个时区？
+助手：你希望使用哪个时区？
 用户：北京时间。
-助手：已创建任务，每天上午 9 点（Asia/Shanghai）在后台执行。
+助手：已创建每日学习建议任务，提示词为“生成一条学习建议”，每天上午 9 点（Asia/Shanghai）执行。
 ```
 
-任务执行后的结果展示方式将在实现阶段确定；目前不承诺邮件、短信或其他外部通知能力。
+任务提示词与执行结果保存在所属会话中；页面关闭后由后端继续执行。执行记录直接展示结果预览，对话与已展开的记录每 5 秒刷新，翻页后也持续更新。没有邮件、短信等外部通知。
 
 ## 模块划分
 
@@ -129,7 +131,7 @@ pnpm preview
 cd app
 ./.venv/Scripts/python.exe -m pip install -r requirements.txt
 ./.venv/Scripts/python.exe -m uvicorn main:app --reload
-python -m alembic upgrade head # 执行migration
+./.venv/Scripts/python.exe -m alembic upgrade head # 手动执行 migration
 ```
 
 
@@ -195,7 +197,7 @@ data: {"code": "upstream_timeout", "message": "模型服务响应超时，请稍
 
 这是 POST SSE，浏览器原生 `EventSource` 不能直接传入该 JSON 请求，应使用 `fetch` 流读取或支持 POST 的 SSE 客户端。反向代理应禁用响应缓冲并设置足够的流式读取超时。
 
-实现依据 [DeepSeek Chat Completions 文档](https://api-docs.deepseek.com/api/create-chat-completion/) 的流式协议，任务存储、调度与默认时区的配置将在对应功能实现时补充。
+实现依据 [DeepSeek Chat Completions 文档](https://api-docs.deepseek.com/api/create-chat-completion/) 的流式协议。定时任务的持久化、时间规则与恢复策略见 [后端定时任务说明](app/README.md#持久化定时任务)。
 
 大模型 API 密钥应由后端读取，不能写入前端代码或提交到版本库。
 
@@ -203,16 +205,16 @@ data: {"code": "upstream_timeout", "message": "模型服务响应超时，请稍
 
 - [x] 多轮对话后端接口、用户存在性与会话归属校验（DeepSeek + SSE）。
 - [x] 账号登录、退出、前端聊天页面及持久化会话历史。
-- [ ] 对话中的任务意图识别与信息确认。
-- [ ] 定时任务持久化及后台调度。
-- [ ] 任务执行状态与结果查询。
-- [ ] 执行失败处理及服务重启后的任务恢复策略。
+- [x] 对话中的任务意图识别、提示词提取与缺失信息澄清。
+- [x] 定时任务持久化及后台调度（AI function call 创建）。
+- [x] 任务执行状态与结果查询。
+- [x] 执行失败记录及服务重启后的恢复策略。
 - [ ] 依赖说明、配置示例、启动步骤和测试。
 
 ## 项目边界
 
 本项目定位为演示用途。生产使用前，还需完善身份认证、任务权限、资源限制、凭据保护及运行监控等能力。
 
-通用网页搜索默认 AGENT_WEB_PROVIDER=auto：有 TAVILY_API_KEY 用 Tavily，没有密钥用公开搜索与网页读取；Agent 循环、工具限制和 Skills 配置均有注释。需人工升级迁移到 20261011_0003 后使用。执行记录可从 /api/agent/tasks 查询，具体流程、API 与 Shell 边界见 [后端说明](app/README.md#function-callingskills-与-agent-loop)。
+通用网页搜索默认 AGENT_WEB_PROVIDER=auto：有 TAVILY_API_KEY 用 Tavily，没有密钥用公开搜索与网页读取；Agent 循环、工具限制和 Skills 配置均有注释。需人工升级迁移到 head（当前为 20261019_0004）后使用。Agent 执行记录可从 /api/agent/tasks 查询，定时运行记录从 /api/scheduled-tasks/{id}/runs 查询；具体流程、API 与 Shell 边界见 [后端说明](app/README.md#function-callingskills-与-agent-loop)。
 
 天气查询已接入免密钥 Open-Meteo get_weather（默认 AGENT_WEATHER_ENABLED=true），不依赖 Tavily；通用网页搜索也支持免密钥公开方案，TAVILY_API_KEY 为可选。详情见后端 README。

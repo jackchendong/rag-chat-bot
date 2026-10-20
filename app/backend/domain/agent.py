@@ -18,10 +18,19 @@ class AgentPolicy:
 
 
 @dataclass(frozen=True)
+class ToolContext:
+    user_id: int
+    conversation_id: str
+    user_message_id: str = ''
+    scheduled_execution: bool = False
+
+
+@dataclass(frozen=True)
 class PreparedRun:
     turn: PreparedTurn
     task_id: str
     system_prompt: str
+    tool_context: ToolContext | None = None
 
 
 class ToolError(Exception):
@@ -32,6 +41,9 @@ class ToolError(Exception):
 
 
 class Tool(ABC):
+    def bind(self, context: ToolContext) -> 'Tool | None':
+        return self
+
     @property
     @abstractmethod
     def definition(self) -> dict[str, Any]:
@@ -53,6 +65,9 @@ class SkillSource(ABC):
 
 
 class ToolExecutor(ABC):
+    def bind(self, context: ToolContext) -> 'ToolExecutor':
+        return self
+
     @abstractmethod
     def definitions(self) -> list[dict[str, Any]]:
         raise NotImplementedError

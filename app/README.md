@@ -2,14 +2,14 @@
 
 基于 FastAPI 的 Python 后端，提供账号登录或创建、用户存在性与会话归属校验、会话历史和 DeepSeek 多轮 SSE 对话。前端已接入，生产文件放在 static/。
 
-已实现 function calling、Skills、Agent loop、联网和受限 Shell 工具，以及执行任务与步骤审计。尚未实现：知识库/RAG、定时任务调度、正式认证及限流。当前无密码登录和用户 ID 请求头只适用于 Demo，知道他人账号或 ID 即可冒用，不应处理敏感数据或直接公开部署。
+已实现 function calling、Skills、Agent loop、联网和受限 Shell 工具、执行任务与步骤审计，以及 AI 对话创建的 APScheduler + MySQL 持久化定时任务。尚未实现：知识库/RAG、正式认证及限流。当前无密码登录和用户 ID 请求头只适用于 Demo，知道他人账号或 ID 即可冒用，不应处理敏感数据或直接公开部署。
 
 ## 运行环境
 
 - Python 3.10，当前本地解释器为 3.10.11。
 - 虚拟环境位于 `.venv/`，依赖使用 pip 与 `requirements.txt` 管理。
 - FastAPI / Starlette 提供 HTTP 与流式响应，HTTPX 调用模型，python-dotenv 读取 `.env`，Pydantic 校验配置和请求。
-- MySQL 使用 SQLAlchemy 2.0 + PyMySQL，数据库版本变更由 Alembic 管理。
+- MySQL 8.0+ 使用 SQLAlchemy 2.0 + PyMySQL，数据库版本变更由 Alembic 管理；调度认领使用 InnoDB 行锁和 SKIP LOCKED。
 
 以下命令均在本目录 `app/` 中执行。
 
@@ -405,3 +405,83 @@ app/.env 和可提交的 .env.example 均已增加注释。相对目录以 app �
 例如城市武汉可传 `{"city":"武汉","search_name":"Wuhan","country_code":"CN"}`；中文无结果时尝试英文名。同名地点返回候选要求确认省份/国家；不猜用户位置。未传 forecast_date 时以城市时区的今天为准，返回日期、数据有效时间、单位和来源 URL；不把模型预报描述成气象站实测。历史日期或超出未来 7 天范围会明确失败。固定 HTTPS 服务地址，无需修改数据库表或增加依赖。
 
 服务重启后，天气优先用 get_weather，不会因 Tavily 密钥为空而拒绝天气查询。新闻、网页资料在默认 auto 模式下也可使用免密钥公开搜索，Tavily 密钥为可选。服务器本身也必须能访问 Open-Meteo，DNS/代理/连接错误会返回 weather_unavailable，不能用静态天气冒充联网结果。
+
+## 持久化定时任务
+
+安装更新后的 requirements.txt，并在 **app 目录手动执行**：
+
+```powershell
+./.venv/Scripts/python.exe -m pip install -r requirements.txt
+./.venv/Scripts/python.exe -m alembic upgrade head
+./.venv/Scripts/python.exe -m uvicorn main:app --reload
+```
+
+新增迁移 `20261019_0004` 创建 `scheduled_tasks`、`scheduled_runs`，本次开发只生成离线 SQL，没有执行在线迁移。服务生命周期只装配资源和启动调度器，不建表、不迁移、不做数据库探活；调度器首次在 2 秒后的正常扫描中访问数据库。未迁移时任务接口返回 503，调度器记录安全错误并等待下轮。
+
+直接在对话中说“北京时间每天早上 9 点查询武汉天气”，AI 提取任务名称、可独立执行的提示词、计划和时区，通过 create_scheduled_task function call 保存。缺少时区、准确时间或任务内容时先追问，用户补充后结合历史继续创建；信息完整的明确请求直接创建，无需手填表单或重复确认。支持一次性、每天、每周和自定义 Cron。左侧“定时任务”分页查询当前用户全部任务，保留编辑、停止/恢复、立即运行及跳转会话。会话中展开任务查看运行记录和结果预览，点击定位完整回答。前端每 5 秒刷新任务、展开记录的全部已加载页及当前会话消息，聊天结束时也刷新任务。消息刷新保留已加载的历史，不覆盖正在进行的 SSE，也不在用户向上阅读时强制滚到底部。
+
+### 对话工具与 Skill
+
+内置运行时 Skill 为 `app/skills/scheduled-tasks/SKILL.md`，由现有 FileSkillSource 发现，模型按需调用 load_skill 加载。Skill 指导提取自包含的执行 prompt：例如“北京时间每天九点查询武汉天气”保存为“查询武汉今天的天气，给出天气、温度和降水建议”，调度规则另存；周期任务不写死创建当天日期，也不把“创建任务”等措辞留在执行提示词中。只提供新 Skill 文件时重启即可发现；自定义 AGENT_SKILLS_DIR 的部署需将该 Skill 放入所配置目录。
+
+`create_scheduled_task` 参数仅为 name、prompt、kind、timezone、cron、run_at。工具在每轮执行时绑定服务端的 user_id、conversation_id 和 user_message_id，不接受模型指定身份或会话。共享注册表不保存可变的当前用户，多个并发会话分别创建独立的上下文工具实例。工具复用现有校验与仓储，提交成功后才返回 `ok=true, persisted=true, task=...`；模型据此反馈任务及下次运行时间，纯文本“已创建”不代表保存。
+
+同一用户消息内，以规范化计划和提示词计算稳定 request_id，相同调用即使换了 tool_call_id 或名称也返回已有任务；不同用户消息允许用户明确要求再次创建，不提供跨聊天请求的全局去重。模型/工具快照、Skill 内容与 hash、创建参数及实际返回均沿用 Agent 审计。关闭 AGENT_ENABLED 时不提供创建能力。
+
+后台运行和立即运行都使用 scheduled_execution 上下文，工具列表中移除 create_scheduled_task，伪造调用也被拒绝，避免递归创建任务。未注册的编辑/停止工具不能由 AI 假装调用，当前仍在任务管理页面操作。创建结果已保存但聊天随后断开或停止时，任务保留，可从列表核实。
+
+### 存储和执行
+
+APScheduler 3.x 的 AsyncIOScheduler 每 2 秒唤醒持久化队列，CronTrigger 计算周期计划；业务任务、下次运行时间、暂停状态、手动运行请求、提示词快照与执行记录全部保存于 MySQL。未使用 SQLAlchemyJobStore（其启动会自动建表，且不能由多个调度器共享）；进程内仅保留可重建的扫描作业及正在执行的协程，重启不依赖这些内存数据恢复业务任务。参见 [APScheduler 官方指南](https://apscheduler.readthedocs.io/en/3.x/userguide.html)。
+
+任务按用户和会话归属隔离，沿用 X-User-Id。扫描在短事务中用 FOR UPDATE SKIP LOCKED 锁定任务、检查运行状态并写入唯一运行记录；网络调用期间不持有事务。同一任务一次最多一个 running，多进程读取同一数据库也通过行锁认领；每进程最多 4 个执行协程。建议 Demo 使用单个 Uvicorn worker；多进程会分别扫描、总并发上限为 worker 数乘 4，不提供分布式公平排队。
+
+每次执行复用现有 Agent、工具权限、上下文和超时预算（移除任务创建工具），将提示词和回答写入任务原会话，并保留 Agent 审计。消息 ID 与运行记录在同一事务中关联；运行详情中的 assistant_message_id 可直接定位消息。失败前尚未创建消息时也保存可定位的失败回答。会话正在生成时通常延后认领；极小的并发窗口若遇到会话忙会记录失败，用户可以手动重跑。
+
+### 时间和恢复策略
+
+- 一次性计划使用 `kind=once` 和带 UTC 偏移的 ISO 8601 `run_at`；周期计划使用 `kind=cron`、五段 `cron` 和明确的 IANA `timezone`。数据库 DATETIME 均为 UTC；API 返回带 +00:00 的时间；界面按任务时区展示。Windows 使用 tzdata 提供时区数据。
+- Cron 顺序为“分 时 日 月 星期”；星期数字采用 APScheduler 语义：0 为周一，推荐 mon–sun。日和星期条件同时指定时需同时满足。每天 09:00 为 `0 9 * * *`，每周一 09:00 为 `0 9 * * mon`。
+- 夏令时跳过不存在的周期墙钟时刻；回拨的重复时刻按不同 UTC 时刻区分，可能各执行一次。一次性 API 由 run_at 的偏移明确时刻；表单拒绝不存在或重复的当地时间，重复时可使用 UTC 时区指定。
+- 重启后读取数据库中保存的待执行时间。过期一次性任务执行一次；周期任务错过多次时合并为一次，再按当前时刻计算下一次，不追赶全部历史。暂停期间不执行周期计划，恢复时从当前时刻计算；过期一次性任务须先编辑未来时间。
+- 停止仅停止后续计划，已排队的手动请求和正在执行的任务继续完成。“立即运行”先持久化 queued，再返回 202；独立于暂停状态，不移动原有定时计划。一个任务已有 queued/running 时返回 409。创建和立即运行要求 request_id UUID，分别按用户、任务去重；响应丢失后以同一 request_id 重试。
+- 模型与工具执行失败不自动重试。整体执行预算包含准备阶段，沿用 AGENT_TIMEOUT_SECONDS，默认 120 秒、最大 240 秒；超时取消模型/工具并保存 failed 和明确错误，取消清理及数据库 I/O 可能增加实际结束耗时。协程发生异常也会结束关联消息、Agent 审计及会话占用，避免消息永久处于 generating。正常关闭保存 cancelled。
+- 结束状态写入遇到 storage_unavailable 最多尝试 3 次（间隔 0.25、0.5 秒），只重试幂等状态保存，不重复调用模型或工具。若回答已提交而运行记录仍为 running，下一轮扫描直接同步已保存的终态，不再等 10 分钟；没有终态回答的遗留 running 仍在认领满 10 分钟后转为 failed 并释放会话占用。恢复扫描不重放工具，不承诺恰好一次执行。日志以 run ID 关联开始、超时、异常和状态写入，便于排查。
+
+任务状态为 active（启用）、paused（停止）、completed（一次性计划已触发、无下次计划）；completed 表示计划已派发，实际成功与否查看运行状态。运行状态为 queued、running、completed、failed、cancelled。
+
+### API
+
+全部接口要求已有用户的 X-User-Id，越权任务返回 404；limit 为 1–100，offset 为 0–100000。BIGINT 消息 ID 以字符串返回。
+
+| 接口 | 用途 |
+|---|---|
+| GET /api/scheduled-tasks?conversation_id=UUID&offset=0&limit=30 | 分页列表，省略 conversation_id 查询当前用户全部任务 |
+| POST /api/scheduled-tasks | 创建并确认持久化；返回 201 |
+| POST /api/scheduled-tasks/{id}/edit | 替换名称、提示词和计划，保留原会话及已排队执行的快照 |
+| POST /api/scheduled-tasks/{id}/state | 设置 status 为 active / paused |
+| POST /api/scheduled-tasks/{id}/run | 持久化立即运行请求，返回 202 和运行记录 |
+| GET /api/scheduled-tasks/{id}/runs?offset=0&limit=20 | 分页执行记录，含时间、状态、错误、提示词快照、assistant_message_id、message_status、result_preview（最多 2000 字符）和 result_truncated |
+
+以下为保留的底层创建 API 请求示例，供开发调试；前端创建通过 AI function call 完成，工具自动绑定 conversation_id 和生成 request_id。编辑 API 使用相同计划字段，去掉 conversation_id 和 request_id：
+
+```json
+{
+  "conversation_id": "替换为已有会话UUID",
+  "request_id": "替换为本次请求UUID",
+  "name": "每日学习建议",
+  "prompt": "生成一条学习建议",
+  "kind": "cron",
+  "timezone": "Asia/Shanghai",
+  "cron": "0 9 * * *",
+  "run_at": null
+}
+```
+
+一次性请求改为 `kind=once`、`cron=null` 和未来的 `run_at`。立即运行请求体为 `{"request_id":"本次请求UUID"}`；停止为 `{"status":"paused"}`。现有 /api/chat SSE 事件和会话接口保持兼容。
+
+### 验证
+
+`./.venv/Scripts/python.exe -m unittest discover -s tests -p test_schedules.py -v` 使用临时 SQLite 文件、兼容 DDL 和模型替身，覆盖对话 function call 创建、Skill 加载与审计、多轮补充信息、身份隔离、同轮创建去重、后台禁止递归创建，以及持久化重读、队列、结果与消息关联、暂停编辑、过期合并、夏令时、关闭取消和中断恢复。模型替身验证调用链，不代表真实模型的意图与提示词提取效果已联调；SQLite 不验证 MySQL 行锁竞争。线上迁移、真实 MySQL 并发及付费模型调用需在实际环境另行验证。
+
+执行状态回归还覆盖 running→completed 的 API 查询、异常结束关联消息、准备阶段超时、终态写入临时失败后的重试，以及已保存结果的立即恢复。前端在 front/ 执行 `node --experimental-strip-types --test tests/background-updates.test.ts`，使用 Node 自带测试器检查后台消息更新、保留历史、延迟响应防回退和执行记录翻页后的刷新；该检查不替代浏览器联调。

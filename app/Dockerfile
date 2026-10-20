@@ -1,6 +1,6 @@
 # Build from app/ after placing the frontend build in app/static/:
 # docker build -t rag-chat-bot .
-FROM python:3.10-slim-bookworm AS dependencies
+FROM m.daocloud.io/docker.io/python:3.10-slim-bookworm AS dependencies
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 RUN python -m venv /opt/venv
 COPY requirements.txt /tmp/requirements.txt
@@ -8,7 +8,7 @@ RUN /opt/venv/bin/python -m pip install --no-cache-dir \
     -i https://pypi.tuna.tsinghua.edu.cn/simple \
     -r /tmp/requirements.txt
 
-FROM python:3.10-slim-bookworm AS runtime
+FROM m.daocloud.io/docker.io/python:3.10-slim-bookworm AS runtime
 ENV PATH="/opt/venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

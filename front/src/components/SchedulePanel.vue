@@ -4,6 +4,7 @@ import { ApiError, listSchedules, listScheduleRuns, runSchedule, saveSchedule, s
 import type { ScheduledTask, ScheduledRun, ScheduleInput } from '@/types/schedule'
 import { formatTime, localTime, zonedTime } from '@/lib/time'
 import { refreshVisiblePages } from '@/lib/pagination'
+import { createUuid } from '@/lib/uuid'
 
 const props = defineProps<{ userId: string; conversationId?: string }>()
 const emit = defineEmits<{ jump: [conversationId: string, messageId?: string]; logout: [] }>()
@@ -132,7 +133,7 @@ async function act(task: ScheduledTask, action: 'state' | 'run') {
       await setScheduleState(props.userId, task.id, task.status === 'active' ? 'paused' : 'active', controller.signal)
       notice.value = task.status === 'active' ? '任务已停止，已经开始的执行会继续完成' : '任务已恢复'
     } else {
-      const requestId = runRequestIds.get(task.id) || crypto.randomUUID()
+      const requestId = runRequestIds.get(task.id) || createUuid()
       runRequestIds.set(task.id, requestId)
       await runSchedule(props.userId, task.id, requestId, controller.signal)
       runRequestIds.delete(task.id)

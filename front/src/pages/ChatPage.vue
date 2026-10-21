@@ -4,6 +4,7 @@ import { ApiError, createConversation, listConversations, listMessages, stopChat
 import type { Conversation, Message, User } from '@/types/chat'
 import SchedulePanel from '@/components/SchedulePanel.vue'
 import { mergeMessageUpdates } from '@/lib/message-updates'
+import { createUuid } from '@/lib/uuid'
 
 const props = defineProps<{ user: User }>()
 const emit = defineEmits<{ logout: [] }>()
@@ -205,6 +206,13 @@ async function loadOlderMessages() {
 async function send() {
   const content = draft.value.trim()
   if (!content || content.length > 10000 || busy.value || loading.value || viewingRecord.value) return
+  let localId: string
+  try {
+    localId = createUuid()
+  } catch (failure) {
+    report(failure)
+    return
+  }
   backgroundController?.abort()
   backgroundController = null
   const currentVersion = version
@@ -217,8 +225,8 @@ async function send() {
   notice.value = ''
   follow.value = true
   let accepted = false
-  const userMessage: Message = { id: `local-user-${crypto.randomUUID()}`, role: 'user', content, status: 'completed', created_at: new Date().toISOString() }
-  const assistantMessage: Message = { id: `local-assistant-${crypto.randomUUID()}`, role: 'assistant', content: '', status: 'generating', created_at: new Date().toISOString() }
+  const userMessage: Message = { id: `local-user-${localId}`, role: 'user', content, status: 'completed', created_at: new Date().toISOString() }
+  const assistantMessage: Message = { id: `local-assistant-${localId}`, role: 'assistant', content: '', status: 'generating', created_at: new Date().toISOString() }
   try {
     if (!selectedId.value) {
       const conversation = await createConversation(props.user.user_id, controller.signal)

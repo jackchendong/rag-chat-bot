@@ -86,7 +86,6 @@ class AgentSettings(BaseModel):
     timeout_seconds: float = Field(default=120, gt=0, le=240, allow_inf_nan=False)
     tool_timeout_seconds: float = Field(default=20, gt=0, le=60, allow_inf_nan=False)
     stop_poll_seconds: float = Field(default=0.25, ge=0.05, le=2, allow_inf_nan=False)
-    max_context_chars: int = Field(default=60000, ge=20000, le=200000)
     max_tool_output_chars: int = Field(default=12000, ge=1000, le=20000)
     web_enabled: bool = True
     web_provider: Literal['auto', 'tavily', 'public'] = 'auto'
@@ -104,7 +103,7 @@ class AgentSettings(BaseModel):
             'enabled': 'AGENT_ENABLED', 'max_rounds': 'AGENT_MAX_ROUNDS',
             'max_tool_calls': 'AGENT_MAX_TOOL_CALLS', 'timeout_seconds': 'AGENT_TIMEOUT_SECONDS',
             'tool_timeout_seconds': 'AGENT_TOOL_TIMEOUT_SECONDS', 'stop_poll_seconds': 'AGENT_STOP_POLL_SECONDS',
-            'max_context_chars': 'AGENT_MAX_CONTEXT_CHARS', 'max_tool_output_chars': 'AGENT_MAX_TOOL_OUTPUT_CHARS',
+            'max_tool_output_chars': 'AGENT_MAX_TOOL_OUTPUT_CHARS',
             'web_enabled': 'AGENT_WEB_ENABLED', 'tavily_api_key': 'TAVILY_API_KEY',
             'web_provider': 'AGENT_WEB_PROVIDER',
             'weather_enabled': 'AGENT_WEATHER_ENABLED',

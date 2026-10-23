@@ -360,7 +360,7 @@ payload 不包含 Authorization 或数据库配置，因此不会直接打印配
 
 - 只有完整上游 `[DONE]` 且 finish_reason 为 tool_calls 时才执行工具。工具参数由 JSON 与 Pydantic 校验，不执行模型生成的代码。
 - 每轮可包含多项工具调用，按顺序执行；不会自动重试工具。重复 tool_call_id 会终止任务，避免重复副作用。
-- 默认最多 6 轮模型、12 次工具调用；最后一轮不提供工具，留给模型生成最终回答。到达预算、上下文超长或总超时会保存部分回答并发送 error。工具自身的参数错误、禁用、未配置或超时记为 failed，并作为工具结果交回模型，由模型解释或调整。
+- 默认最多 6 轮模型、12 次工具调用；最后一轮不提供工具，留给模型生成最终回答。达到轮次、调用次数预算或总超时，以及模型 API 返回错误时，会保存部分回答并发送 error。本地不检查 Agent 总上下文字符数，模型上下文上限由供应商 API 校验；普通聊天的历史选取和单个工具结果仍按各自规则裁剪。旧配置 AGENT_MAX_CONTEXT_CHARS 已移除，本地 .env 中残留该变量不会生效。工具自身的参数错误、禁用、未配置或超时记为 failed，并作为工具结果交回模型，由模型解释或调整。
 - `meta` 增加 task_id；工具开始和结束时增加 `agent_step` 事件，字段为 task_id、step_id、name、status。既有前端忽略额外事件，继续展示 message 和 done/error；工具调用与循环无需新增前端操作。审计查询当前通过 API 或 /docs 使用。
 - stop 与断连取消当前模型读取或联网 HTTP 请求；POSIX 下 Shell 杀死整个进程组并回收子进程。取消后保存部分回答和步骤状态，不能保证外部服务停止计费，已完成的工具不会回滚。
 
@@ -403,7 +403,6 @@ app/.env 和可提交的 .env.example 均已增加注释。相对目录以 app �
 | AGENT_TIMEOUT_SECONDS | 120；整个执行总预算，最大 240 秒 |
 | AGENT_TOOL_TIMEOUT_SECONDS | 20；每个工具上限，最大 60 秒 |
 | AGENT_STOP_POLL_SECONDS | 0.25；停止标记检查间隔，另有数据库访问耗时 |
-| AGENT_MAX_CONTEXT_CHARS | 60000；含系统指令、JSON 消息和工具定义，超过预算终止 |
 | AGENT_MAX_TOOL_OUTPUT_CHARS | 12000；超长工具结果返回有效 JSON 截断预览 |
 | AGENT_SKILLS_DIR | ./skills；管理员维护的 SKILL.md 目录 |
 | AGENT_WEATHER_ENABLED | true；注册免密钥天气工具，独立于 Tavily |

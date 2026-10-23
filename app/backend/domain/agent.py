@@ -13,7 +13,6 @@ class AgentPolicy:
     timeout_seconds: float = 120
     tool_timeout_seconds: float = 20
     stop_poll_seconds: float = 0.25
-    max_context_chars: int = 60000
     max_tool_output_chars: int = 12000
 
 

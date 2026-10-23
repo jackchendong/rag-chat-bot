@@ -79,8 +79,6 @@ class ChatService:
             '可用 Skills：' + json.dumps(catalog, ensure_ascii=False) + '\n' +
             '\n'.join(item['content'] for item in selected)
         )
-        if len(prompt) + len(message) > self.policy.max_context_chars:
-            raise ConversationError('invalid_skill', '所选 Skills 超过上下文预算')
         if scheduled_run_id:
             turn = await self.database(self.store.prepare_turn, user_id, conversation_id, message, scheduled_run_id)
         else:
@@ -163,8 +161,6 @@ class ChatService:
             for round_no in range(1, rounds + 1):
                 # Reserve the last round for a final answer with tool calling disabled.
                 definitions = tools.definitions() if self.policy.enabled and round_no < rounds else []
-                if len(json.dumps([item.as_dict() for item in messages], ensure_ascii=False)) + len(json.dumps(definitions, ensure_ascii=False)) > self.policy.max_context_chars:
-                    raise ModelServiceError('context_limit', 'Agent 上下文超过限制，请缩小问题范围')
                 active_step = await self.database(self.tasks.begin_step, run.task_id, round_no, 'model', self.model,
                     {'messages': [item.as_dict() for item in messages], 'tools': definitions})
                 round_content = ''

@@ -101,6 +101,26 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[-1].event, 'done')
         self.assertEqual(self.tasks.finished[-1][:2], ('completed', 'answer'))
 
+    async def test_large_context_reaches_model_across_tool_rounds(self):
+        content = '独立任务资料' * 42000
+
+        class LargeSkills(NoSkills):
+            def load(self, name):
+                return {'name': name, 'content': content}
+
+        gateway = Gateway([[tool_chunk()], [ModelChunk(content='answer'), ModelChunk(done=True, finish_reason='stop')]])
+        service = self.service(gateway)
+        service.skills = LargeSkills()
+        run = await service.prepare(1, 'conv', 'hello', skill_names=['large'])
+        events = [event async for event in service.answer(run)]
+        self.assertEqual(events[-1].event, 'done')
+        self.assertEqual(len(gateway.requests), 2)
+        for messages, _ in gateway.requests:
+            self.assertGreater(len(messages[0].content), 200000)
+            self.assertIn(content, messages[0].content)
+        self.assertEqual(gateway.requests[1][0][-1].role, 'tool')
+        self.assertEqual(self.tasks.finished[-1][:2], ('completed', 'answer'))
+
     async def test_invalid_json_never_executes_and_model_gets_error(self):
         gateway = Gateway([[tool_chunk(arguments='{')], [ModelChunk(done=True, finish_reason='stop')]])
         await self.collect(self.service(gateway))

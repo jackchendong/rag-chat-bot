@@ -107,7 +107,8 @@ class ConversationRepository(ConversationStore):
             recent = list(session.scalars(select(Message).where(Message.conversation_id == conversation_id)
                 .order_by(Message.id.desc()).limit(40)))
             pairs: list[list[ModelMessage]] = []
-            ordered = list(reversed(recent))
+            # Scheduled/manual task runs use a self-contained prompt, not chat history.
+            ordered = list(reversed(recent)) if scheduled_run is None else []
             for position in range(len(ordered) - 1):
                 user_message, assistant_message = ordered[position:position + 2]
                 if user_message.role == 'user' and assistant_message.role == 'assistant' and assistant_message.status == 'completed':

@@ -127,6 +127,41 @@ class ScheduleTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('请问使用哪个时区？', [item.content for item in gateway.requests[1][0]])
         self.assertEqual(len(self.repo.list_tasks(1, self.conv, 0, 30)), 1)
 
+    async def test_scheduled_and_manual_runs_exclude_history_but_chat_keeps_it(self):
+        previous = self.conversations.prepare_turn(1, self.conv, '之前讨论的其他任务')
+        self.conversations.finish_turn(previous, '之前的聊天回复', 'completed')
+        task = self.create(prompt='只执行这条独立任务')
+        gateway = Gateway([
+            [ModelChunk(content='定时执行结果'), ModelChunk(done=True, finish_reason='stop')],
+            [ModelChunk(content='手动执行结果'), ModelChunk(done=True, finish_reason='stop')],
+            [ModelChunk(content='普通聊天结果'), ModelChunk(done=True, finish_reason='stop')],
+        ])
+        service = self.service(gateway)
+        runner = ScheduleRunner(self.repo, service)
+        # Trigger a real scheduled occurrence, then manually rerun the same task.
+        with self.sessions() as session:
+            session.get(ScheduledTask, task['id']).next_run_at = utc_now() - timedelta(seconds=1)
+            session.commit()
+        execution = self.repo.claim()
+        await runner.execute(execution)
+        self.repo.enqueue(1, task['id'], str(uuid4()))
+        await runner.execute(self.repo.claim())
+
+        records = self.repo.runs(1, task['id'], 0, 20)
+        self.assertEqual({record['source'] for record in records}, {'scheduled', 'manual'})
+        self.assertTrue(all(record['status'] == 'completed' for record in records))
+        for messages, _ in gateway.requests:
+            self.assertEqual([message.role for message in messages], ['system', 'user'])
+            self.assertEqual(messages[1].content, task['prompt'])
+            self.assertIn('你是一个可调用工具的助手', messages[0].content)
+
+        followup = await service.prepare(1, self.conv, '继续之前的话题')
+        _ = [event async for event in service.answer(followup)]
+        contents = [message.content for message in gateway.requests[-1][0]]
+        for expected in ('之前讨论的其他任务', '之前的聊天回复', '定时执行结果', '手动执行结果'):
+            self.assertIn(expected, contents)
+        self.assertEqual(contents[-1], '继续之前的话题')
+
     async def test_tool_contexts_are_isolated_and_model_cannot_choose_owner(self):
         other_conv = self.conversations.create_conversation(2).conversation_id
         root = ToolRegistry([CreateScheduledTaskTool(self.repo)])
